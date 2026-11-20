@@ -23,7 +23,7 @@ You can also paste the key in **Settings → OpenRouter API key**: it is stored 
 
 ## Features
 
-- **Four seats**: red and blue spymaster and operative, each with its own model, temperature and avatar. Presets: same model, red vs blue, spymasters vs operatives.
+- **Four seats**: red and blue spymaster and operative, each with its own model, temperature and avatar. Presets: same model, red vs blue, spymasters vs operatives and crossed (each model plays the opposite role on the other team), plus ready-made matchups and example models, all with an estimated cost per game. The examples are popular, cheap models on OpenRouter that keep a typical game at around $0.002–$0.02.
 - **Play yourself**: you can take a seat. As spymaster you type the clue; as operative you click a card or type it (case- and accent-insensitive; if it doesn't match, `deepseek/deepseek-v4-flash` tries to interpret it and asks you to confirm). While you play there is no god mode and the server never sends the hidden colors.
 - **Languages**: EN/ES switch in the header. New games are created in the interface language (word bank, rules, prompts, referee messages and history).
 - **Official rules**: one-word clue + number (0 = unlimited guesses), up to number + 1 guesses, at least one guess per turn, plurals and derived forms forbidden, a win can happen on the opponent's turn. House rule: 40-turn limit.

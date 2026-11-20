@@ -12,7 +12,9 @@ import {
   History,
   LoaderCircle,
   Play,
+  Repeat2,
   Sparkles,
+  Swords,
   User,
   Users,
   Wand2,
@@ -28,7 +30,9 @@ import {
 } from "@/lib/codenames/avatars";
 import {
   CODENAMES_EXAMPLE_MODELS,
+  CODENAMES_MATCHUPS,
   DEFAULT_CODENAMES_MODEL_ID,
+  estimateGameCostUsd,
 } from "@/lib/codenames/model-presets";
 import { randomSeed } from "@/lib/codenames/prng";
 import {
@@ -88,7 +92,11 @@ const ES = {
   sameModel: "Mismo modelo",
   redVsBlue: "Rojo vs azul",
   spymastersVsOperatives: "Jefes vs agentes",
-  cheapExamples: "Baratos de ejemplo:",
+  crossed: "Cruzado",
+  crossedTitle: "Cada modelo de rojo juega el rol contrario en azul",
+  matchups: "Enfrentamientos:",
+  exampleModels: "Modelos de ejemplo:",
+  perGame: (cost: string) => `≈ ${cost} por partida típica`,
   seed: "Semilla",
   random: "Aleatoria",
   seedLabel: "Semilla de la partida",
@@ -152,7 +160,11 @@ const STRINGS: Record<Locale, typeof ES> = {
     sameModel: "Same model",
     redVsBlue: "Red vs blue",
     spymastersVsOperatives: "Spymasters vs operatives",
-    cheapExamples: "Cheap examples:",
+    crossed: "Crossed",
+    crossedTitle: "Each red model plays the opposite role for blue",
+    matchups: "Matchups:",
+    exampleModels: "Example models:",
+    perGame: (cost: string) => `≈ ${cost} per typical game`,
     seed: "Seed",
     random: "Random",
     seedLabel: "Game seed",
@@ -364,22 +376,27 @@ function SeatEditor({
         }}
         aria-hidden="true"
       />
-      <div className="relative flex items-center gap-1.5">
-        {isSpymaster ? (
-          <Crown size={11} className={teamText} />
-        ) : (
-          <Eye size={11} className={teamText} />
-        )}
-        <span className={cn("text-[11px] font-semibold uppercase tracking-[0.16em]", teamText)}>
-          {t.team(team)} · {isSpymaster ? t.spymaster : t.operative}
-        </span>
+      <div className="relative flex items-start gap-2">
+        <div className={cn("min-w-0 flex-1 leading-tight", teamText)}>
+          <span className="block text-[10.5px] font-semibold uppercase tracking-[0.16em] opacity-75">
+            {t.team(team)}
+          </span>
+          <span className="mt-0.5 flex items-center gap-1.5 text-[11.5px] font-semibold uppercase tracking-[0.12em]">
+            {isSpymaster ? (
+              <Crown size={11} className="shrink-0" />
+            ) : (
+              <Eye size={11} className="shrink-0" />
+            )}
+            <span className="truncate">{isSpymaster ? t.spymaster : t.operative}</span>
+          </span>
+        </div>
         <button
           type="button"
           onClick={onToggleHuman}
           aria-pressed={Boolean(config.human)}
           title={config.human ? t.humanOffTitle : t.humanOnTitle}
           className={cn(
-            "ml-auto inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors",
+            "inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-semibold transition-colors",
             config.human
               ? "border-accent/50 bg-accent-soft text-accent"
               : "border-line bg-canvas/70 text-muted hover:text-ink",
@@ -605,7 +622,24 @@ export function SetupScreen({
     );
   };
 
-  const applyPreset = (preset: "same" | "teams" | "roles") => {
+  const applyMatchup = (seatModels: Record<Seat, string>) => {
+    setSeats((current) =>
+      Object.fromEntries(
+        SEATS.map((seat) => [seat, { ...current[seat], modelId: seatModels[seat] }]),
+      ) as Record<Seat, SeatConfig>,
+    );
+  };
+
+  const costTitle = (seatModels: Record<Seat, string>, note?: string) => {
+    const cost = formatCost(estimateGameCostUsd(seatModels, toolModels) ?? undefined);
+    return [note, cost ? t.perGame(cost) : null].filter(Boolean).join(" · ");
+  };
+
+  const availableMatchups = CODENAMES_MATCHUPS.filter((matchup) =>
+    SEATS.every((seat) => toolModels.some((model) => model.id === matchup.seats[seat])),
+  );
+
+  const applyPreset = (preset: "same" | "teams" | "roles" | "cross") => {
     setSeats((current) => {
       const next = { ...current };
       if (preset === "same") {
@@ -619,6 +653,15 @@ export function SetupScreen({
         next.blue_operative = {
           ...next.blue_operative,
           modelId: current.blue_spymaster.modelId,
+        };
+      } else if (preset === "cross") {
+        next.blue_spymaster = {
+          ...next.blue_spymaster,
+          modelId: current.red_operative.modelId,
+        };
+        next.blue_operative = {
+          ...next.blue_operative,
+          modelId: current.red_spymaster.modelId,
         };
       } else {
         next.blue_spymaster = {
@@ -744,12 +787,41 @@ export function SetupScreen({
             <Crown size={11} />
             {t.spymastersVsOperatives}
           </button>
+          <button
+            type="button"
+            onClick={() => applyPreset("cross")}
+            title={t.crossedTitle}
+            className="inline-flex items-center gap-1 rounded-full border border-line bg-canvas/70 px-2.5 py-1 text-[12.5px] font-medium text-ink-soft transition-all hover:-translate-y-0.5 hover:border-accent/40 hover:text-ink"
+          >
+            <Repeat2 size={11} />
+            {t.crossed}
+          </button>
         </div>
+
+        {availableMatchups.length > 0 && (
+          <div className="mt-2 flex flex-wrap items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 text-[12px] font-medium text-faint">
+              <Swords size={11} />
+              {t.matchups}
+            </span>
+            {availableMatchups.map((matchup) => (
+              <button
+                key={matchup.id}
+                type="button"
+                onClick={() => applyMatchup(matchup.seats)}
+                title={costTitle(matchup.seats)}
+                className="rounded-full border border-line bg-canvas/70 px-2 py-0.5 text-[11.5px] font-medium text-ink-soft transition-all hover:-translate-y-0.5 hover:border-accent/40 hover:text-ink"
+              >
+                {matchup.label[locale]}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="mt-2 flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 text-[12px] font-medium text-faint">
             <Sparkles size={11} />
-            {t.cheapExamples}
+            {t.exampleModels}
           </span>
           {CODENAMES_EXAMPLE_MODELS.filter((preset) =>
             toolModels.some((model) => model.id === preset.id),
@@ -758,7 +830,15 @@ export function SetupScreen({
               key={preset.id}
               type="button"
               onClick={() => applyToAll(preset.id)}
-              title={preset.note}
+              title={costTitle(
+                {
+                  red_spymaster: preset.id,
+                  red_operative: preset.id,
+                  blue_spymaster: preset.id,
+                  blue_operative: preset.id,
+                },
+                preset.note,
+              )}
               className="rounded-full border border-accent/25 bg-accent-soft px-2 py-0.5 text-[11.5px] font-medium text-accent transition-all hover:-translate-y-0.5 hover:border-accent/60 hover:shadow-[0_6px_18px_-8px_var(--accent)]"
             >
               {preset.label}

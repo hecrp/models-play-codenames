@@ -209,7 +209,7 @@ async function main() {
     `Modelos · rojo: ${redModel} · azul: ${blueModel}${spymasterModel ? ` · jefes: ${spymasterModel}` : ""}${operativeModel ? ` · agentes: ${operativeModel}` : ""}`,
   );
   console.log(
-    `Ejemplos baratos: ${CODENAMES_EXAMPLE_MODELS.map((model) => `${model.id} (${model.note})`).join(" · ")}`,
+    `Modelos de ejemplo: ${CODENAMES_EXAMPLE_MODELS.map((model) => `${model.id} (${model.note})`).join(" · ")}`,
   );
   console.log(`Semilla: ${seed} · tope de coste: $${maxCost.toFixed(2)}`);
 
