@@ -88,7 +88,7 @@ const ES = {
     items: [
       "Una sola palabra, sin espacios ni guiones.",
       "Debe referirse al significado: nada de letras, rimas ni posiciones en el tablero.",
-      "No puede ser una palabra sin revelar ni una forma de ella (plural incluido), ni contenerla ni estar contenida en ella. Se ignoran mayúsculas y tildes.",
+      "No puede ser una palabra sin revelar ni una forma de ella (plural, derivado) ni una palabra compuesta que la incluya. Se ignoran mayúsculas y tildes.",
       "Si una pista o una adivinanza es ilegal, el árbitro la devuelve con el motivo y el modelo tiene hasta 3 intentos.",
       "Si se agotan, el jefe pierde el turno o el agente pierde el turno de forma forzada. Cada fallo queda registrado.",
       "Un timeout de 60 s cuenta como intento fallido.",
@@ -251,7 +251,7 @@ const STRINGS: Record<Locale, typeof ES> = {
       items: [
         "A single word, with no spaces or hyphens.",
         "It must relate to meaning: no letters, rhymes or board positions.",
-        "It cannot be an unrevealed word or a form of one (plurals included), nor contain it or be contained in it. Case and accents are ignored.",
+        "It cannot be an unrevealed word or a form of one (plurals, derived words), nor a compound word that includes it. Case and accents are ignored.",
         "If a clue or guess is illegal, the referee returns it with the reason and the model gets up to 3 attempts.",
         "If they run out, the spymaster loses the turn or the operative's turn is forcibly ended. Every failure is logged.",
         "A 60 s timeout counts as a failed attempt.",

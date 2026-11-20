@@ -1,4 +1,4 @@
-import { apply, BOARD_SIZE, createGame, normalizeWord } from "./engine";
+import { apply, BOARD_SIZE, createGame, normalizeWord, sharesRoot } from "./engine";
 import { createRng, hashSeed, randomInt, shuffle } from "./prng";
 import { operativeSeat, otherTeam, spymasterSeat, teamOfSeat } from "./seats";
 import { buildPublicHistory, viewFor } from "./view";
@@ -27,13 +27,7 @@ function findSafeClue(view: AgentView, rng: () => number): string {
   const candidates = shuffle(ES_WORDS, rng);
   for (const candidate of candidates) {
     const normalized = normalizeWord(candidate);
-    const conflicts = hidden.some(
-      (word) =>
-        word === normalized ||
-        word.includes(normalized) ||
-        normalized.includes(word),
-    );
-    if (!conflicts) return candidate;
+    if (!hidden.some((word) => sharesRoot(normalized, word))) return candidate;
   }
   throw new Error("No se encontró una pista segura para el agente falso.");
 }

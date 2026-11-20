@@ -115,6 +115,53 @@ function singular(word: string): string {
   return word;
 }
 
+/** Shortest fragment that can count as the same root inside a longer word. */
+const MIN_EMBEDDED_ROOT = 4;
+/** Shortest leftover that can be the other half of a compound word. */
+const MIN_COMPOUND_PART = 3;
+/** Short endings that turn a word into a derived one (FARM → FARMER). */
+const DERIVATION_ENDINGS = new Set(["er", "or"]);
+/** Shortest shared beginning that marks two words as the same family. */
+const MIN_SHARED_PREFIX = 5;
+
+function commonPrefixLength(a: string, b: string): number {
+  let length = 0;
+  while (length < a.length && length < b.length && a[length] === b[length]) {
+    length += 1;
+  }
+  return length;
+}
+
+/**
+ * Whether a clue counts as "a form of" a board word: the same word, its plural,
+ * a compound that embeds it (AGUA / PARAGUAS) or the same word family
+ * (MARINERO / MARINA). A short fragment that merely appears inside an
+ * unrelated word (CAN in CANDADO, PIE in PIEL) does not count.
+ * Both arguments must already be normalized.
+ */
+export function sharesRoot(clue: string, boardWord: string): boolean {
+  if (clue === boardWord) return true;
+  const a = singular(clue);
+  const b = singular(boardWord);
+  if (a === b) return true;
+
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  if (short.length >= MIN_EMBEDDED_ROOT && short.length * 2 >= long.length) {
+    // Only at either end, and the rest must look like another word or a
+    // derivation: CHAIR is not HAIR, but LIGHTHOUSE contains HOUSE.
+    if (long.startsWith(short)) {
+      const rest = long.slice(short.length);
+      if (rest.length >= MIN_COMPOUND_PART || DERIVATION_ENDINGS.has(rest)) return true;
+    }
+    if (long.endsWith(short) && long.length - short.length >= MIN_COMPOUND_PART) {
+      return true;
+    }
+  }
+
+  const prefix = commonPrefixLength(a, b);
+  return prefix >= MIN_SHARED_PREFIX && prefix * 4 >= short.length * 3;
+}
+
 export function validateClue(
   state: GameState,
   rawWord: string,
@@ -130,15 +177,9 @@ export function validateClue(
   }
 
   const clue = normalizeWord(word);
-  const clueSingular = singular(clue);
   const hiddenCards = state.board.filter((card) => !card.revealed);
   for (const card of hiddenCards) {
-    if (
-      card.normalized === clue ||
-      card.normalized.includes(clue) ||
-      clue.includes(card.normalized) ||
-      singular(card.normalized) === clueSingular
-    ) {
+    if (sharesRoot(clue, card.normalized)) {
       return fail("clue_on_board", text.clueOnBoard(card.word));
     }
   }

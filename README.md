@@ -8,6 +8,8 @@ This project was born out of the work done during an **OpenCode course** held at
 
 ## Getting started
 
+Requirements: **Node.js 24+** and **pnpm 12** (the version pinned in `packageManager`). If you don't have pnpm, install it with `npm install -g pnpm@12`. The Corepack bundled with some Node 24 releases can't launch pnpm 12 and fails with `Cannot find module …/pnpm.cjs`; installing pnpm through npm avoids it.
+
 ```bash
 pnpm install
 cp .env.example .env.local     # on Windows: Copy-Item .env.example .env.local
@@ -80,3 +82,9 @@ pnpm build
 - **Single instance**: the orchestrator lives in the Node process. Restarting the server interrupts the game, but state and events are in SQLite and it can be resumed. Serverless or multi-replica deployments would need a worker/queue.
 - **Node 24+**: uses `node:sqlite`, no native dependencies.
 - `cacheComponents` is enabled in `next.config.ts`; the catalog and game `GET` routes force dynamic rendering.
+
+## License and trademark
+
+The code is released under the [MIT License](LICENSE).
+
+Codenames is a board game designed by Vlaada Chvátil and published by Czech Games Edition; the name is their trademark. This is an unofficial fan project for experimenting with AI models, not affiliated with or endorsed by Czech Games Edition. If you enjoy the game, buy the real thing.

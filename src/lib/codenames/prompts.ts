@@ -1,7 +1,7 @@
 import { otherTeam, roleOfSeat, teamOfSeat } from "./seats";
 import type { AgentView, CardColor, Language, Seat, Team } from "./types";
 
-export const PROMPT_VERSION = "v5";
+export const PROMPT_VERSION = "v6";
 
 const MAX_HISTORY_LINES = 60;
 
@@ -50,7 +50,7 @@ const ES: PromptStrings = {
 - El tablero tiene 25 palabras. El equipo que empieza tiene 9 cartas, el otro equipo 8, hay 7 neutrales y 1 asesino.
 - Cada turno, el jefe de espías de un equipo da una pista: UNA sola palabra y un número del 0 al 9. El número indica cuántas cartas propias están relacionadas con la pista.
 - La pista debe referirse al SIGNIFICADO de las palabras. No vale aludir a letras, número de letras, sonidos o rimas ni a la posición de las cartas en el tablero. El número no forma parte de la pista.
-- La pista no puede ser ninguna palabra visible sin revelar ni ninguna forma de ella (plural, derivado, misma raíz), ni contenerla ni estar contenida en ella (se ignoran mayúsculas y tildes). Una vez revelada una carta, su palabra ya se puede usar.
+- La pista no puede ser ninguna palabra visible sin revelar ni ninguna forma de ella (plural, derivado, misma familia) ni una palabra compuesta que la incluya (se ignoran mayúsculas y tildes). Que una palabra aparezca por casualidad dentro de otra no cuenta: PIE es válida aunque esté PIEL. Una vez revelada una carta, su palabra ya se puede usar.
 - Pista con 0: «ninguna de nuestras cartas tiene que ver con esto». En ese caso el agente puede hacer intentos sin límite.
 - Con cualquier otro número, el agente puede hacer como máximo número + 1 intentos. El intento extra sirve para recuperar cartas de pistas anteriores.
 - El agente DEBE intentar al menos una carta por turno; después de la primera puede plantarse cuando quiera.
@@ -140,7 +140,7 @@ const EN: PromptStrings = {
 - The board has 25 words. The starting team has 9 cards, the other team 8, there are 7 neutral cards and 1 assassin.
 - Each turn, a team's spymaster gives a clue: ONE single word and a number from 0 to 9. The number says how many of their own cards relate to the clue.
 - The clue must be about the MEANING of the words. It cannot refer to letters, letter count, sounds or rhymes, nor to card positions on the board. The number is not part of the clue.
-- The clue cannot be any visible unrevealed word or any form of it (plural, derived word, same root), nor contain it or be contained in it (case and accents are ignored). Once a card is revealed, its word can be used.
+- The clue cannot be any visible unrevealed word or any form of it (plural, derived word, same family), nor a compound word that includes it (case and accents are ignored). A word that just happens to appear inside another does not count: HAIR is fine even if CHAIR is on the board. Once a card is revealed, its word can be used.
 - Clue with 0: "none of our cards relate to this". In that case the operative may guess without limit.
 - With any other number, the operative may make at most number + 1 guesses. The extra guess is meant to recover cards from earlier clues.
 - The operative MUST guess at least one card per turn; after the first one they may stop whenever they want.

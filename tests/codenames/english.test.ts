@@ -28,6 +28,22 @@ describe("English games", () => {
     expect(validateClue({ ...state, board }, "cities", 1)?.code).toBe("clue_on_board");
   });
 
+  it("rejects English compounds and derivations but not chance overlaps", () => {
+    const { state } = englishGame();
+    const withCard = (word: string) => ({
+      ...state,
+      board: state.board.map((card, index) =>
+        index === 0 ? { ...card, word, normalized: word.toLowerCase() } : card,
+      ),
+    });
+    expect(validateClue(withCard("LIGHTHOUSE"), "house", 1)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("FARMER"), "farm", 1)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("PRINCESS"), "prince", 1)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("CHAIR"), "hair", 1)).toBeNull();
+    expect(validateClue(withCard("WALLET"), "wall", 1)).toBeNull();
+    expect(validateClue(withCard("PENGUIN"), "pen", 1)).toBeNull();
+  });
+
   it("builds English prompts, tools and history", () => {
     const { state, events } = englishGame();
     const seat = spymasterSeat(state.turn.team);

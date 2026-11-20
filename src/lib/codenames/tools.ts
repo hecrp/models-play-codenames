@@ -18,7 +18,7 @@ const DESCRIPTIONS = {
     giveClue:
       "Da una pista de Codenames: una sola palabra y un número del 0 al 9, acompañada de una frase breve de charla.",
     clueWord:
-      "Una sola palabra en español, sin espacios ni guiones, relacionada por significado con tus cartas. No puede ser una carta sin revelar, ni contenerla, ni estar contenida en ella.",
+      "Una sola palabra en español, sin espacios ni guiones, relacionada por significado con tus cartas. No puede ser una carta sin revelar, ni una forma suya (plural, derivado) ni una palabra compuesta que la incluya.",
     clueNumber:
       "Número de cartas propias relacionadas con la pista. 0 significa 'ninguna de las nuestras' y da intentos sin límite.",
     guess:
@@ -33,7 +33,7 @@ const DESCRIPTIONS = {
     giveClue:
       "Give a Codenames clue: one single word and a number from 0 to 9, with a short line of table talk.",
     clueWord:
-      "One single English word, without spaces or hyphens, related by meaning to your cards. It cannot be an unrevealed card, contain one, or be contained in one.",
+      "One single English word, without spaces or hyphens, related by meaning to your cards. It cannot be an unrevealed card, a form of one (plural, derived word) or a compound word that includes one.",
     clueNumber:
       "Number of your own cards related to the clue. 0 means 'none of ours' and gives unlimited guesses.",
     guess:

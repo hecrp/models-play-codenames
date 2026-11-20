@@ -4,6 +4,7 @@ import {
   apply,
   createGame,
   forceEndTurn,
+  normalizeWord,
   remainingCards,
   validateClue,
 } from "../../src/lib/codenames/engine";
@@ -90,12 +91,32 @@ describe("validateClue", () => {
     expect(error?.code).toBe("clue_on_board");
   });
 
-  it("rejects a clue contained in or containing a hidden word", () => {
-    const state = newGame();
-    const card = state.board.find((candidate) => candidate.word.length >= 5)!;
-    const fragment = card.word.slice(0, 3);
-    const error = validateClue(state, fragment, 2);
-    expect(error?.code).toBe("clue_on_board");
+  function withCard(word: string): GameState {
+    const base = newGame();
+    return {
+      ...base,
+      board: base.board.map((card, index) =>
+        index === 0 ? { ...card, word, normalized: normalizeWord(word) } : card,
+      ),
+    };
+  }
+
+  it("rejects compounds and words of the same family", () => {
+    expect(validateClue(withCard("PARAGUAS"), "agua", 2)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("SONRISA"), "risa", 2)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("MARINERO"), "marina", 2)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("PANADERO"), "panadería", 2)?.code).toBe("clue_on_board");
+    expect(validateClue(withCard("ELECTRICISTA"), "electricidad", 2)?.code).toBe(
+      "clue_on_board",
+    );
+  });
+
+  it("allows words that only appear by chance inside a hidden word", () => {
+    expect(validateClue(withCard("CANDADO"), "can", 2)).toBeNull();
+    expect(validateClue(withCard("PIEL"), "pie", 2)).toBeNull();
+    expect(validateClue(withCard("SALUD"), "sal", 2)).toBeNull();
+    expect(validateClue(withCard("REMOLACHA"), "remo", 2)).toBeNull();
+    expect(validateClue(withCard("BRISA"), "risa", 2)).toBeNull();
   });
 
   it("rejects spaces, hyphens and punctuation", () => {
