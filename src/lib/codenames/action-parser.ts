@@ -2,7 +2,8 @@ import type { GameAction, Language, OracleErrorCode } from "./types";
 import { gameText } from "./messages";
 
 export type ToolParseResult =
-  | { ok: true; action: GameAction }
+  /** `salvaged`: the arguments were broken JSON and complete fields were rescued. */
+  | { ok: true; action: GameAction; salvaged?: boolean }
   | { ok: false; code: OracleErrorCode; message: string };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -88,6 +89,64 @@ export function asSay(value: unknown): string | undefined {
   return clean ? clean.slice(0, 180) : undefined;
 }
 
+const STRING_FIELDS = ["word", "palabra", "say", "reasoning"];
+const NUMBER_FIELDS = ["number", "numero", "número", "count", "num", "n"];
+
+/**
+ * Rescue the complete fields of broken tool arguments: JSON cut off by the
+ * token limit, or a provider's own markup leaking into it. Only fields whose
+ * value is fully present are kept; returns null when nothing is usable.
+ */
+export function salvageArguments(raw: string): Record<string, unknown> | null {
+  const result: Record<string, unknown> = {};
+  for (const field of STRING_FIELDS) {
+    const match = new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`).exec(raw);
+    if (!match) continue;
+    try {
+      result[field] = JSON.parse(`"${match[1]}"`);
+    } catch {
+      // Broken escape sequence: skip the field.
+    }
+  }
+  for (const field of NUMBER_FIELDS) {
+    const match = new RegExp(`"${field}"\\s*:\\s*"?(-?\\d+)`).exec(raw);
+    if (match) {
+      result[field] = Number(match[1]);
+      break;
+    }
+  }
+  const targets = /"(?:targets|objetivos)"\s*:\s*(\[[^\]]*\])/.exec(raw);
+  if (targets) {
+    try {
+      result.targets = JSON.parse(targets[1]);
+    } catch {
+      // Incomplete list: drop it, targets are private and optional to the engine.
+    }
+  }
+  return Object.keys(result).length > 0 ? result : null;
+}
+
+/**
+ * Some providers answer a forced tool call with the arguments as plain text,
+ * often inside a ```json fence. Returns the first JSON object found, or the
+ * salvaged fields of a broken one.
+ */
+export function extractJsonObject(text: string): Record<string, unknown> | null {
+  const start = text.indexOf("{");
+  if (start < 0) return null;
+  const end = text.lastIndexOf("}");
+  if (end > start) {
+    try {
+      const parsed: unknown = JSON.parse(text.slice(start, end + 1));
+      const record = asRecord(parsed);
+      if (record) return record;
+    } catch {
+      // Fall through to salvage.
+    }
+  }
+  return salvageArguments(text.slice(start));
+}
+
 /**
  * Convert a tool call from any provider into the engine's strict action shape.
  * The engine still performs the semantic validation (board words, ranges...).
@@ -101,15 +160,22 @@ export function parseToolCall(
   // Some models (gpt-oss, Harmony format) prefix the namespace: functions.give_clue.
   const name = rawName.trim().replace(/^functions[.:]/, "");
   let argumentsValue = rawArguments;
+  let salvaged = false;
   if (typeof rawArguments === "string") {
     try {
       argumentsValue = JSON.parse(rawArguments);
     } catch {
-      return {
-        ok: false,
-        code: "invalid_action",
-        message: text.argsNotJson,
-      };
+      // Truncated output or provider markup mid-JSON: keep the complete fields.
+      const rescued = salvageArguments(rawArguments);
+      if (!rescued) {
+        return {
+          ok: false,
+          code: "invalid_action",
+          message: text.argsNotJson,
+        };
+      }
+      argumentsValue = rescued;
+      salvaged = true;
     }
   }
 
@@ -141,6 +207,7 @@ export function parseToolCall(
     }
     return {
       ok: true,
+      ...(salvaged ? { salvaged } : {}),
       action: {
         type: "give_clue",
         word,
@@ -165,6 +232,7 @@ export function parseToolCall(
     }
     return {
       ok: true,
+      ...(salvaged ? { salvaged } : {}),
       action: {
         type: "guess",
         word,
@@ -179,6 +247,7 @@ export function parseToolCall(
   if (name === "stop") {
     return {
       ok: true,
+      ...(salvaged ? { salvaged } : {}),
       action: {
         type: "stop",
         ...(asReasoning(args.reasoning)

@@ -12,6 +12,7 @@ import {
   Play,
   ScrollText,
   Trophy,
+  X,
 } from "lucide-react";
 import type { EventMeta, GameConfig, Seat, StoredGameEvent, Team } from "@/lib/codenames/types";
 import { avatarById } from "@/lib/codenames/avatars";
@@ -61,7 +62,6 @@ const ES = {
   noClue: "sin pista",
   stopShort: "planta",
   thinking: "Pensando…",
-  showLog: "Mostrar registro",
   log: "Registro",
   logAria: "Registro de la partida",
   expandAll: "Expandir todos los turnos",
@@ -114,7 +114,6 @@ const STRINGS: Record<Locale, typeof ES> = {
     noClue: "no clue",
     stopShort: "stops",
     thinking: "Thinking…",
-    showLog: "Show log",
     log: "Log",
     logAria: "Game log",
     expandAll: "Expand all turns",
@@ -640,14 +639,12 @@ function TurnSection({
 export function GameLog({
   events,
   config,
-  open,
-  onToggle,
+  onClose,
   className,
 }: {
   events: StoredGameEvent[];
   config: GameConfig;
-  open: boolean;
-  onToggle: () => void;
+  onClose: () => void;
   className?: string;
 }) {
   const t = useStrings(STRINGS);
@@ -668,32 +665,7 @@ export function GameLog({
 
   useEffect(() => {
     if (stickRef.current) scrollToBottom("auto");
-  }, [events.length, open]);
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={false}
-        title={t.showLog}
-        className={cn(
-          "glass flex items-center justify-center gap-1.5 rounded-2xl border px-3 py-1.5 text-muted transition-colors hover:text-ink",
-          "xl:h-full xl:flex-col xl:justify-start xl:px-1.5 xl:py-3",
-          className,
-        )}
-      >
-        <ScrollText size={13} className="text-accent" />
-        <span className="font-display text-[12px] font-semibold uppercase tracking-[0.18em] xl:[writing-mode:vertical-rl]">
-          {t.log}
-        </span>
-        <span className="rounded-full bg-panel px-1.5 font-mono text-[10.5px] tabular-nums text-faint">
-          {groups.filter((group) => group.turn !== null).length}
-        </span>
-        <ChevronDown size={13} className="xl:rotate-90" />
-      </button>
-    );
-  }
+  }, [events.length]);
 
   return (
     <section
@@ -729,13 +701,12 @@ export function GameLog({
           </button>
           <button
             type="button"
-            onClick={onToggle}
-            aria-expanded={true}
+            onClick={onClose}
             title={t.hideLog}
             aria-label={t.hideLog}
             className="rounded-md p-1 text-faint transition-colors hover:bg-hover hover:text-ink"
           >
-            <ChevronDown size={13} className="rotate-180 xl:-rotate-90" />
+            <X size={14} />
           </button>
         </div>
       </header>
@@ -754,7 +725,6 @@ export function GameLog({
           className={cn(
             "h-full min-h-0 overflow-y-auto px-3 py-1",
             "[mask-image:linear-gradient(to_bottom,transparent_0,#000_10px,#000_calc(100%-14px),transparent_100%)]",
-            "max-h-[220px] lg:max-h-none",
           )}
         >
           {events.length === 0 ? (

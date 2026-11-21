@@ -4,11 +4,17 @@ import { randomSeed } from "../src/lib/codenames/prng";
 import { SEATS, teamLabel, teamOfSeat } from "../src/lib/codenames/seats";
 import { ES_WORDS } from "../src/lib/codenames/words/es";
 import { DEFAULT_CODENAMES_MODEL_ID, CODENAMES_EXAMPLE_MODELS } from "../src/lib/codenames/model-presets";
+import {
+  DEFAULT_REASONING_EFFORT,
+  REASONING_EFFORTS,
+  isReasoningEffort,
+  resolveEffort,
+} from "../src/lib/codenames/reasoning";
 import { getModelCatalog, supportsToolCalling } from "../src/lib/server/model-catalog";
 import { createOpenRouterAgentAdapter } from "../src/lib/server/codenames/agents";
 import { GameOrchestrator } from "../src/lib/server/codenames/orchestrator";
 import { resolveOpenRouterKey } from "../src/lib/server/openrouter";
-import type { Seat, SeatConfig, StoredGameEvent } from "../src/lib/codenames/types";
+import type { ReasoningEffort, Seat, SeatConfig, StoredGameEvent } from "../src/lib/codenames/types";
 
 function loadLocalEnv(): void {
   for (const file of [".env.local", ".env"]) {
@@ -138,6 +144,19 @@ async function main() {
   const blueModel = arg("blue") ?? allModel;
   const spymasterModel = arg("spymaster");
   const operativeModel = arg("operative");
+  // Reasoning effort, with the same precedence as models: role > team > all.
+  const effortFlags = ["reasoning", "red-reasoning", "blue-reasoning", "spymaster-reasoning", "operative-reasoning"];
+  const efforts: Record<string, ReasoningEffort | undefined> = {};
+  for (const flag of effortFlags) {
+    const value = arg(flag);
+    if (value === undefined) continue;
+    if (!isReasoningEffort(value)) {
+      console.error(`--${flag}=${value} no es válido. Usa uno de: ${REASONING_EFFORTS.join(", ")}.`);
+      process.exitCode = 1;
+      return;
+    }
+    efforts[flag] = value;
+  }
   const seed = numberArg("seed", randomSeed());
   const maxCost = numberArg("max-cost", 1);
   const delay = numberArg("delay", 0);
@@ -160,6 +179,10 @@ async function main() {
       const role = seat.endsWith("spymaster")
         ? spymasterModel ?? (team === "red" ? redModel : blueModel)
         : operativeModel ?? (team === "red" ? redModel : blueModel);
+      const reasoningEffort =
+        (seat.endsWith("spymaster") ? efforts["spymaster-reasoning"] : efforts["operative-reasoning"]) ??
+        efforts[`${team}-reasoning`] ??
+        efforts.reasoning;
       return [
         seat,
         {
@@ -168,6 +191,7 @@ async function main() {
           temperature: seat.endsWith("spymaster") ? 0.7 : 0.3,
           avatarId: seat,
           displayName: seat,
+          ...(reasoningEffort ? { reasoningEffort } : {}),
         },
       ];
     }),
@@ -190,7 +214,6 @@ async function main() {
     apiKey,
     models: catalog.models,
     timeoutMs: 60_000,
-    maxTokens: 2000,
   });
 
   const game = new GameOrchestrator({
@@ -210,6 +233,14 @@ async function main() {
   );
   console.log(
     `Modelos de ejemplo: ${CODENAMES_EXAMPLE_MODELS.map((model) => `${model.id} (${model.note})`).join(" · ")}`,
+  );
+  console.log(
+    `Razonamiento: ${SEATS.map((seat) => {
+      const model = catalog.models.find((candidate) => candidate.id === seats[seat].modelId);
+      const effort = resolveEffort(model, seats[seat].reasoningEffort);
+      const asked = seats[seat].reasoningEffort ?? DEFAULT_REASONING_EFFORT;
+      return `${seat}=${effort ?? "—"}${effort && effort !== asked ? ` (pedido ${asked})` : ""}`;
+    }).join(" · ")}`,
   );
   console.log(`Semilla: ${seed} · tope de coste: $${maxCost.toFixed(2)}`);
 

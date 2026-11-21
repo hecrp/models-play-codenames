@@ -23,7 +23,7 @@ You can also paste the key in **Settings → OpenRouter API key**: it is stored 
 
 ## Features
 
-- **Four seats**: red and blue spymaster and operative, each with its own model, temperature and avatar. Presets: same model, red vs blue, spymasters vs operatives and crossed (each model plays the opposite role on the other team), plus ready-made matchups and example models, all with an estimated cost per game. The examples are popular, cheap models on OpenRouter that keep a typical game at around $0.002–$0.02.
+- **Four seats**: red and blue spymaster and operative, each with its own model, temperature, reasoning effort and avatar. Presets: same model, red vs blue, spymasters vs operatives and crossed (each model plays the opposite role on the other team), plus ready-made matchups and example models, all with an estimated cost per game. The examples are popular, cheap models on OpenRouter that keep a typical game at around $0.002–$0.02.
 - **Play yourself**: you can take a seat. As spymaster you type the clue; as operative you click a card or type it (case- and accent-insensitive; if it doesn't match, `deepseek/deepseek-v4-flash` tries to interpret it and asks you to confirm). While you play there is no god mode and the server never sends the hidden colors.
 - **Languages**: EN/ES switch in the header. New games are created in the interface language (word bank, rules, prompts, referee messages and history).
 - **Official rules**: one-word clue + number (0 = unlimited guesses), up to number + 1 guesses, at least one guess per turn, plurals and derived forms forbidden, a win can happen on the opponent's turn. House rule: 40-turn limit.
@@ -31,7 +31,8 @@ You can also paste the key in **Settings → OpenRouter API key**: it is stored 
 - **Controls**: play, pause, manual mode (next move / end turn), speed 0.25×–2×, god mode and abort.
 - **Replay** without calling the models again, exportable with `?format=jsonl`.
 - **Persistence**: Node's built-in SQLite at `data/codenames/codenames.db` (ignored by git).
-- **Resilience**: retries with backoff and `Retry-After` on 429/5xx; if OpenRouter keeps failing, the game pauses instead of losing turns.
+- **Reasoning effort**: for models that reason, each seat picks a level (off, low, medium, high…). Only the levels the model accepts are offered, according to the OpenRouter catalog; "Auto" uses low. The output budget grows with the effort so reasoning never eats the move.
+- **Resilience**: retries with backoff and `Retry-After` on 429/5xx; if OpenRouter keeps failing, the game pauses instead of losing turns. Calls go to providers that support every parameter sent (falling back to any provider if none does). Answers cut off by the token limit are retried once with less reasoning, and common malformed answers are rescued instead of costing an attempt: the move written as JSON text, identical duplicate calls, and arguments truncated or corrupted mid-JSON.
 
 ## Endpoints
 
@@ -65,6 +66,9 @@ pnpm codenames:simulate 1000
 
 # Real game with a cheap model
 pnpm codenames:play --model=openai/gpt-oss-20b --seed=42 --max-cost=0.05
+
+# Reasoning effort: --reasoning for every seat, overridden per team or role
+pnpm codenames:play --model=deepseek/deepseek-v4.1-flash-1017 --reasoning=low --spymaster-reasoning=high
 ```
 
 ## Tests

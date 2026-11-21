@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Bot,
+  Brain,
   ChevronRight,
   Copy,
   Crown,
@@ -20,7 +21,8 @@ import {
   Wand2,
 } from "lucide-react";
 import type { ModelInfo } from "@/lib/types";
-import type { Seat, SeatConfig, Team } from "@/lib/codenames/types";
+import type { ReasoningEffort, Seat, SeatConfig, Team } from "@/lib/codenames/types";
+import { effortOptions, isReasoningEffort, resolveEffort } from "@/lib/codenames/reasoning";
 import {
   AVATARS,
   DEFAULT_SEAT_AVATARS,
@@ -128,6 +130,19 @@ const ES = {
   chooseModel: "Elegir modelo",
   onlyToolModels: "Solo modelos con tool calling",
   chooseAvatar: "Elegir avatar",
+  reasoning: "Razonamiento",
+  reasoningHelp:
+    "Cuánto piensa el modelo antes de jugar. Más razonamiento suele dar mejores jugadas, pero es más lento y caro.",
+  effortAuto: (level: string) => `Auto (${level})`,
+  efforts: {
+    none: "Sin razonar",
+    minimal: "Mínimo",
+    low: "Bajo",
+    medium: "Medio",
+    high: "Alto",
+    xhigh: "Muy alto",
+    max: "Máximo",
+  } as Record<ReasoningEffort, string>,
 };
 
 const STRINGS: Record<Locale, typeof ES> = {
@@ -196,6 +211,19 @@ const STRINGS: Record<Locale, typeof ES> = {
     chooseModel: "Choose model",
     onlyToolModels: "Only models with tool calling",
     chooseAvatar: "Choose avatar",
+    reasoning: "Reasoning",
+    reasoningHelp:
+      "How much the model thinks before playing. More reasoning usually means better moves, but slower and more expensive.",
+    effortAuto: (level: string) => `Auto (${level})`,
+    efforts: {
+      none: "Off",
+      minimal: "Minimal",
+      low: "Low",
+      medium: "Medium",
+      high: "High",
+      xhigh: "Very high",
+      max: "Max",
+    },
   },
 };
 
@@ -271,6 +299,27 @@ function pickDefaultModel(
     models.some((model) => model.id === preset.id),
   );
   return featured?.id ?? models[0]?.id ?? DEFAULT_CODENAMES_MODEL_ID;
+}
+
+/**
+ * Drop a stored effort the seat's current model does not accept (after a model
+ * change), so the game uses exactly what the selector shows: "auto".
+ */
+function withSupportedEfforts(
+  seats: Record<Seat, SeatConfig>,
+  models: ModelInfo[],
+): Record<Seat, SeatConfig> {
+  return Object.fromEntries(
+    SEATS.map((seat) => {
+      const config = seats[seat];
+      const model = models.find((candidate) => candidate.id === config.modelId);
+      const keep =
+        config.reasoningEffort !== undefined &&
+        effortOptions(model).includes(config.reasoningEffort);
+      const { reasoningEffort: _dropped, ...rest } = config;
+      return [seat, keep ? config : rest];
+    }),
+  ) as Record<Seat, SeatConfig>;
 }
 
 function loadStoredSetup(): StoredSetup | null {
@@ -360,6 +409,13 @@ function SeatEditor({
       : "border-team-blue/25 bg-[linear-gradient(155deg,color-mix(in_oklab,var(--team-blue)_10%,transparent),transparent_60%)] hover:border-team-blue/50";
   const teamText = team === "red" ? "text-team-red-ink" : "text-team-blue-ink";
   const temperature = supportsParameter(model, "temperature");
+  // Only levels this model accepts; "auto" is the app default adapted to it.
+  const efforts = effortOptions(model);
+  const autoEffort = resolveEffort(model, undefined);
+  const chosenEffort =
+    config.reasoningEffort && efforts.includes(config.reasoningEffort)
+      ? config.reasoningEffort
+      : "auto";
 
   return (
     <div
@@ -429,20 +485,53 @@ function SeatEditor({
               {isSpymaster ? t.humanSpymaster : t.humanOperative}
             </p>
           ) : (
-          <button
-            type="button"
-            onClick={onPickModel}
-            className="mt-0.5 flex w-full items-center gap-1.5 rounded-lg border border-line bg-canvas/80 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-hover"
-          >
-            <Bot size={11} className="shrink-0 text-muted" />
-            <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-soft">
-              {model ? modelDisplayName(model.name) : config.modelId}
-            </span>
-            <ChevronRight size={11} className="shrink-0 text-faint" />
-          </button>
+            <button
+              type="button"
+              onClick={onPickModel}
+              className="mt-0.5 flex w-full items-center gap-1.5 rounded-lg border border-line bg-canvas/80 px-2 py-1.5 text-left transition-colors hover:border-line-strong hover:bg-hover"
+            >
+              <Bot size={11} className="shrink-0 text-muted" />
+              <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-soft">
+                {model ? modelDisplayName(model.name) : config.modelId}
+              </span>
+              <ChevronRight size={11} className="shrink-0 text-faint" />
+            </button>
           )}
         </div>
       </div>
+
+      {/* Same layout as the temperature row: label on the left, value on the right. */}
+      {!config.human && efforts.length > 0 && (
+        <label
+          className="relative mt-3 flex items-center justify-between gap-2 text-[13px]"
+          title={t.reasoningHelp}
+        >
+          <span className="inline-flex items-center gap-1.5 font-medium text-ink-soft">
+            <Brain size={13} className="text-faint" />
+            {t.reasoning}
+          </span>
+          <select
+            value={chosenEffort}
+            onChange={(event) =>
+              onChange({
+                reasoningEffort: isReasoningEffort(event.target.value)
+                  ? event.target.value
+                  : undefined,
+              })
+            }
+            className="min-w-0 max-w-[60%] cursor-pointer rounded-md border border-line bg-canvas/80 px-1.5 py-0.5 text-[12px] text-ink-soft outline-none transition-colors hover:border-line-strong focus:border-line-strong"
+          >
+            <option value="auto">
+              {t.effortAuto(autoEffort ? t.efforts[autoEffort] : "—")}
+            </option>
+            {efforts.map((effort) => (
+              <option key={effort} value={effort}>
+                {t.efforts[effort]}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
 
       {!config.human && (
       <div className="relative mt-3">
@@ -519,6 +608,9 @@ export function SetupScreen({
               ? { displayName: raw.displayName.slice(0, 40) }
               : {}),
             human: raw.human === true,
+            ...(isReasoningEffort(raw.reasoningEffort)
+              ? { reasoningEffort: raw.reasoningEffort }
+              : {}),
           };
         }
         return next;
@@ -694,7 +786,7 @@ export function SetupScreen({
         {
           seed: seed === "" ? randomSeed() : seed,
           lang: locale,
-          seats,
+          seats: withSupportedEfforts(seats, toolModels),
           speed,
           maxCostUsd: maxCost > 0 ? maxCost : null,
         },

@@ -545,6 +545,19 @@ body {
   animation: bounce-dot 1.2s infinite ease-in-out;
 }
 
+/* Blinking cursor at the end of a chat message while it types out. */
+.stream-caret {
+  display: inline-block;
+  width: 0.42em;
+  height: 1em;
+  margin-left: 1px;
+  border-radius: 1px;
+  vertical-align: -0.15em;
+  background: currentColor;
+  opacity: 0.55;
+  animation: caret 0.9s steps(1) infinite;
+}
+
 .shimmer-text {
   background: linear-gradient(
     90deg,
@@ -597,12 +610,6 @@ input[type="number"]::-webkit-inner-spin-button {
 /* ======================================================================
    Codenames — atmosphere, glass, cards and effects
    ====================================================================== */
-
-@property --angle {
-  syntax: "<angle>";
-  inherits: false;
-  initial-value: 0deg;
-}
 
 @keyframes orb-drift {
   0% {
@@ -667,12 +674,6 @@ input[type="number"]::-webkit-inner-spin-button {
   }
   52% {
     opacity: 0.48;
-  }
-}
-
-@keyframes spin-angle {
-  to {
-    --angle: 360deg;
   }
 }
 
@@ -1174,36 +1175,16 @@ input[type="number"]::-webkit-inner-spin-button {
 }
 }
 
-/* Animated conic border for "live" surfaces */
-.live-border {
-  position: relative;
-  isolation: isolate;
+/* A light that travels around a "live" panel's rounded border (see LiveTrace) */
+/* Duration and per-layer delays are set inline by LiveTrace. */
+.live-trace rect {
+  animation: live-trace 6s linear infinite;
 }
 
-.live-border::before {
-  content: "";
-  position: absolute;
-  inset: -1px;
-  z-index: -1;
-  padding: 1.5px;
-  border-radius: inherit;
-  background: conic-gradient(
-    from var(--angle),
-    transparent 0 55%,
-    var(--live, var(--accent)) 72%,
-    color-mix(in oklab, var(--live, var(--accent)) 40%, white) 78%,
-    transparent 92%
-  );
-  -webkit-mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask:
-    linear-gradient(#000 0 0) content-box,
-    linear-gradient(#000 0 0);
-  mask-composite: exclude;
-  animation: spin-angle 3.6s linear infinite;
-  pointer-events: none;
+@keyframes live-trace {
+  to {
+    stroke-dashoffset: -100;
+  }
 }
 
 .text-gradient {
@@ -1416,12 +1397,16 @@ input[type="number"]::-webkit-inner-spin-button {
     transparent 65%
   );
   transform: translateX(-140%);
-  transition: transform 0.7s ease;
+  /* No transition here: on mouse leave the shine snaps back off-card at once
+     instead of sweeping in reverse over the card the pointer just left. */
   pointer-events: none;
 }
 
-.cn-card:hover .cn-face-front::after {
-  transform: translateX(140%);
+@media (hover: hover) {
+  .cn-card:hover .cn-face-front::after {
+    transform: translateX(140%);
+    transition: transform 0.7s ease;
+  }
 }
 
 .cn-card-agent {
@@ -1739,6 +1724,7 @@ input[type="number"]::-webkit-inner-spin-button {
   .animate-slide-in,
   .animate-card-reveal,
   .typing-dot,
+  .stream-caret,
   .shimmer-text,
   .md.streaming > :last-child::after,
   .cn-orb,
@@ -1747,7 +1733,7 @@ input[type="number"]::-webkit-inner-spin-button {
   .cn-petals span,
   .cn-scanlines,
   .cn-card,
-  .live-border::before,
+  .live-trace rect,
   .text-gradient,
   .btn-shine::after,
   .live-dot::after,

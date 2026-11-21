@@ -119,6 +119,10 @@ export function normalizeModel(raw: unknown): ModelInfo | null {
 
   const description =
     typeof model.description === "string" ? model.description.slice(0, 380) : "";
+  const reasoningInfo =
+    model.reasoning && typeof model.reasoning === "object"
+      ? (model.reasoning as Record<string, unknown>)
+      : null;
 
   return {
     id,
@@ -141,6 +145,17 @@ export function normalizeModel(raw: unknown): ModelInfo | null {
     supportsReasoning:
       supportedParameters.includes("reasoning") ||
       supportedParameters.includes("include_reasoning"),
+    ...(reasoningInfo
+      ? {
+          reasoning: {
+            mandatory: reasoningInfo.mandatory === true,
+            efforts: toStringArray(reasoningInfo.supported_efforts),
+            ...(typeof reasoningInfo.default_effort === "string"
+              ? { defaultEffort: reasoningInfo.default_effort }
+              : {}),
+          },
+        }
+      : {}),
     supportedParameters,
     inputModalities:
       inputModalities.length > 0 ? inputModalities : ["text"],

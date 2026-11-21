@@ -1,6 +1,6 @@
 import type { Usage, ModelInfo } from "@/lib/types";
 import type { FunctionTool, ToolChoice } from "@/lib/codenames/tools";
-import type { Language } from "@/lib/codenames/types";
+import type { Language, ReasoningEffort } from "@/lib/codenames/types";
 import { gameText } from "@/lib/codenames/messages";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
@@ -174,6 +174,8 @@ export interface ToolCompletion {
   latencyMs: number;
   finishReason?: string;
   toolChoiceFallback: boolean;
+  /** No provider met the default routing requirements, so it was relaxed. */
+  routingFallback?: boolean;
   /** Upstream provider that served the call (DeepInfra, Groq…). */
   provider?: string;
   /** Retries after 429/5xx/network failures before the final response. */
@@ -191,9 +193,14 @@ export interface ToolCompletionOptions {
   maxTokens?: number;
   timeoutMs?: number;
   includeReasoning?: boolean;
-  reasoningEffort?: "low" | "medium" | "high";
-  /** OpenRouter provider routing preferences, sent as-is (order, allow_fallbacks…). */
+  reasoningEffort?: ReasoningEffort;
+  /**
+   * OpenRouter provider routing preferences, sent as-is (order, allow_fallbacks…).
+   * When unset, DEFAULT_ROUTING applies.
+   */
   provider?: Record<string, unknown>;
+  /** Internal: false skips DEFAULT_ROUTING (used for the routing fallback). */
+  defaultRouting?: boolean;
   signal?: AbortSignal;
   maxRetries?: number;
   /** Language for error messages that end up in the game log. */
@@ -229,7 +236,9 @@ async function requestOnce(
     usage: { include: true },
   };
   if (options.temperature !== undefined) payload.temperature = options.temperature;
-  if (options.provider) payload.provider = options.provider;
+  const provider =
+    options.provider ?? (options.defaultRouting === false ? undefined : DEFAULT_ROUTING);
+  if (provider) payload.provider = provider;
   if (options.includeReasoning) {
     payload.reasoning = {
       effort: options.reasoningEffort ?? "low",
@@ -309,6 +318,22 @@ async function requestOnce(
   return { data, latencyMs: Math.round(performance.now() - started) };
 }
 
+/**
+ * Only route to providers that support every parameter we send (tools,
+ * tool_choice, reasoning, temperature). Some providers of the same model
+ * answer tool calls as plain text or leak their own markup into the JSON.
+ */
+export const DEFAULT_ROUTING: Record<string, unknown> = { require_parameters: true };
+
+/** No provider could serve the request with the routing requirements. */
+function isRoutingRejection(error: unknown): boolean {
+  return (
+    error instanceof OpenRouterError &&
+    (error.status === 404 ||
+      (error.status === 400 && /endpoint|require_parameters/i.test(error.message)))
+  );
+}
+
 const BACKOFF_BASE_MS = 1_500;
 const BACKOFF_MAX_MS = 20_000;
 
@@ -367,23 +392,36 @@ export async function completeWithTools(
       { retryable: false },
     );
   }
-  const requestOptions: ToolCompletionOptions = {
+  let requestOptions: ToolCompletionOptions = {
     ...options,
     apiKey: resolvedKey,
   };
 
-  let outcome: RequestOutcome;
-  let toolChoiceFallback = false;
-  try {
-    outcome = await requestWithBackoff(requestOptions, requestOptions.toolChoice);
-  } catch (error) {
-    if (isToolChoiceRejection(error, requestOptions.toolChoice)) {
-      outcome = await requestWithBackoff(requestOptions, "auto");
-      toolChoiceFallback = true;
-    } else {
-      throw error;
+  // A provider that rejects the forced tool_choice gets one retry with "auto".
+  const attempt = async (
+    opts: ToolCompletionOptions,
+  ): Promise<{ outcome: RequestOutcome; toolChoiceFallback: boolean }> => {
+    try {
+      return { outcome: await requestWithBackoff(opts, opts.toolChoice), toolChoiceFallback: false };
+    } catch (error) {
+      if (!isToolChoiceRejection(error, opts.toolChoice)) throw error;
+      return { outcome: await requestWithBackoff(opts, "auto"), toolChoiceFallback: true };
     }
+  };
+
+  let result: Awaited<ReturnType<typeof attempt>>;
+  let routingFallback = false;
+  try {
+    result = await attempt(requestOptions);
+  } catch (error) {
+    // Default routing found no provider supporting every parameter: relax it
+    // once before giving up, so a model with few providers still plays.
+    if (options.provider || !isRoutingRejection(error)) throw error;
+    requestOptions = { ...requestOptions, defaultRouting: false };
+    routingFallback = true;
+    result = await attempt(requestOptions);
   }
+  const { outcome, toolChoiceFallback } = result;
 
   const { data, latencyMs } = outcome;
   const retries = outcome.retries ?? 0;
@@ -427,6 +465,7 @@ export async function completeWithTools(
         ? choice.finish_reason
         : undefined,
     toolChoiceFallback,
+    ...(routingFallback ? { routingFallback } : {}),
     ...(typeof data.provider === "string" && data.provider ? { provider: data.provider } : {}),
     retries,
   };

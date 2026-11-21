@@ -1,6 +1,7 @@
 import { AVATARS, DEFAULT_SEAT_AVATARS, avatarById, isAvatarId } from "./avatars";
 import { DEFAULT_CODENAMES_MODEL_ID } from "./model-presets";
 import { PROMPT_VERSION } from "./prompts";
+import { isReasoningEffort } from "./reasoning";
 import { randomSeed } from "./prng";
 import { SEATS } from "./seats";
 import { apiText } from "./api-messages";
@@ -59,6 +60,10 @@ function parseSeat(raw: unknown, seat: Seat, text: ApiText): SeatConfig | string
       ? value.displayName.trim().slice(0, 40)
       : avatar?.name ?? "Player";
 
+  // An unknown effort falls back to the default rather than rejecting the game.
+  const reasoningEffort =
+    !human && isReasoningEffort(value.reasoningEffort) ? value.reasoningEffort : undefined;
+
   return {
     seat,
     modelId,
@@ -66,6 +71,7 @@ function parseSeat(raw: unknown, seat: Seat, text: ApiText): SeatConfig | string
     avatarId,
     displayName,
     ...(human ? { human: true } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
   };
 }
 

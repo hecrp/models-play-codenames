@@ -19,6 +19,14 @@ export interface ModelInfo {
     completion: number;
   };
   supportsReasoning: boolean;
+  /** Reasoning controls from the catalog, when OpenRouter describes them. */
+  reasoning?: {
+    /** Reasoning cannot be turned off (effort "none" is rejected). */
+    mandatory: boolean;
+    /** Accepted `reasoning.effort` values; empty when unknown. */
+    efforts: string[];
+    defaultEffort?: string;
+  };
   supportedParameters: string[];
   inputModalities: string[];
   created: number;

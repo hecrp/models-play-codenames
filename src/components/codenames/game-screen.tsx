@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BookOpen,
   ChevronLeft,
@@ -10,6 +10,7 @@ import {
   Pause,
   Play,
   RotateCcw,
+  ScrollText,
   SkipForward,
   Skull,
   Sparkles,
@@ -34,7 +35,7 @@ import { GameControls, ClueBanner } from "./game-controls";
 import { GameLog } from "./game-log";
 import { HumanPanel, useHumanActions } from "./human-panel";
 import { LocaleSwitch } from "./locale-switch";
-import { TeamPanel, lastActions } from "./team-panel";
+import { TeamPanel } from "./team-panel";
 
 interface GameScreenProps {
   gameId: string;
@@ -82,6 +83,9 @@ const ES = {
   aborted: "Abortada",
   finished: "Finalizada",
   rules: "Reglas",
+  log: "Registro",
+  openLog: "Abrir el registro de la partida",
+  closeLog: "Cerrar el registro",
   newGame: "Nueva partida",
   manualMode: "Modo manual",
   manualHint: "La partida avanza solo cuando tú lo indicas.",
@@ -145,6 +149,9 @@ const STRINGS: Record<Locale, typeof ES> = {
     aborted: "Aborted",
     finished: "Finished",
     rules: "Rules",
+    log: "Log",
+    openLog: "Open the game log",
+    closeLog: "Close the log",
     newGame: "New game",
     manualMode: "Manual mode",
     manualHint: "The game only advances when you say so.",
@@ -370,7 +377,24 @@ function GameView({
 }) {
   const t = useStrings(STRINGS);
   const [dismissedEnd, setDismissedEnd] = useState(false);
-  const [logOpen, setLogOpen] = useState(true);
+  const [logOpen, setLogOpen] = useState(false);
+  const headerRef = useRef<HTMLElement>(null);
+  const [headerHeight, setHeaderHeight] = useState(0);
+  useEffect(() => {
+    const header = headerRef.current;
+    if (!header) return;
+    const observer = new ResizeObserver(() => setHeaderHeight(header.offsetHeight));
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
+  useEffect(() => {
+    if (!logOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setLogOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [logOpen]);
   const humanActions = useHumanActions(gameId);
   useEffect(() => {
     setDismissedEnd(false);
@@ -382,7 +406,6 @@ function GameView({
   const canPick =
     awaitingHuman && humanLive.seat.endsWith("operative") && !humanActions.busy;
   const manual = mode === "live" && paused && !finished;
-  const actions = useMemo(() => lastActions(events), [events]);
   const lastError =
     error ??
     [...events]
@@ -426,7 +449,7 @@ function GameView({
 
   return (
     <div className="relative z-10 flex min-h-dvh flex-col text-ink lg:h-dvh lg:overflow-hidden">
-      <header className="glass relative z-20 flex shrink-0 flex-wrap items-center gap-2 border-0 border-b px-2 py-2 sm:px-4">
+      <header ref={headerRef} className="glass relative z-20 flex shrink-0 flex-wrap items-center gap-2 border-0 border-b px-2 py-2 sm:px-4">
         <button
           type="button"
           onClick={onExit}
@@ -498,6 +521,22 @@ function GameView({
                     ? t.aborted
                     : t.finished}
           </Badge>
+          <button
+            type="button"
+            onClick={() => setLogOpen((value) => !value)}
+            aria-pressed={logOpen}
+            aria-label={logOpen ? t.closeLog : t.openLog}
+            title={logOpen ? t.closeLog : t.openLog}
+            className={cn(
+              "inline-flex h-9 items-center gap-1.5 rounded-lg border px-2.5 text-[12.5px] font-medium transition-colors",
+              logOpen
+                ? "border-accent/50 bg-accent-soft text-accent"
+                : "border-line bg-panel text-ink-soft hover:bg-hover hover:text-ink",
+            )}
+          >
+            <ScrollText size={14} />
+            <span className="hidden sm:inline">{t.log}</span>
+          </button>
           <button
             type="button"
             onClick={onOpenRules}
@@ -577,14 +616,7 @@ function GameView({
         )}
       </div>
 
-      <main
-        className={cn(
-          "grid min-h-0 flex-1 grid-cols-1 content-start gap-2.5 overflow-y-auto px-2 py-2.5 sm:grid-cols-2 sm:px-4 lg:grid-cols-[minmax(160px,1fr)_minmax(0,min(880px,calc((100dvh-370px)*1.357)))_minmax(160px,1fr)] lg:gap-2.5 lg:overflow-hidden xl:grid-rows-1",
-          logOpen
-            ? "lg:grid-rows-[minmax(0,1fr)_185px] xl:grid-cols-[minmax(170px,1fr)_minmax(0,min(880px,calc((100dvh-220px)*1.43)))_minmax(170px,1fr)_minmax(250px,330px)]"
-            : "lg:grid-rows-[minmax(0,1fr)_auto] xl:grid-cols-[minmax(170px,1fr)_minmax(0,min(880px,calc((100dvh-220px)*1.43)))_minmax(170px,1fr)_auto]",
-        )}
-      >
+      <main className="grid min-h-0 flex-1 grid-cols-1 content-start gap-2.5 overflow-y-auto px-2 py-2.5 sm:grid-cols-2 sm:px-4 lg:grid-cols-[minmax(210px,1fr)_minmax(0,min(880px,calc((100dvh-220px)*1.43)))_minmax(210px,1fr)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
         <div className="order-1 col-span-full flex min-h-0 w-full items-start justify-center lg:order-none lg:col-span-1 lg:col-start-2 lg:row-start-1 lg:items-center">
           <Board
             cards={state.board}
@@ -603,31 +635,32 @@ function GameView({
           configs={config.seats}
           state={state}
           thinking={thinking}
-          activeTeam={state.turn.team}
-          actions={actions}
-          className="order-2 self-start lg:order-none lg:self-stretch lg:col-span-1 lg:col-start-1 lg:row-start-1"
+          events={events}
+          className="order-2 lg:order-none lg:col-start-1 lg:row-start-1"
         />
         <TeamPanel
           team="blue"
           configs={config.seats}
           state={state}
           thinking={thinking}
-          activeTeam={state.turn.team}
-          actions={actions}
-          className="order-3 self-start lg:order-none lg:self-stretch lg:col-span-1 lg:col-start-3 lg:row-start-1"
-        />
-
-        <GameLog
           events={events}
-          config={config}
-          open={logOpen}
-          onToggle={() => setLogOpen((value) => !value)}
-          className={cn(
-            "order-4 col-span-full lg:order-none lg:col-span-3 lg:col-start-1 lg:row-start-2 xl:col-span-1 xl:col-start-4 xl:row-start-1 xl:h-auto",
-            logOpen && "min-h-[200px] lg:h-[185px] lg:min-h-0",
-          )}
+          className="order-3 lg:order-none lg:col-start-3 lg:row-start-1"
         />
       </main>
+
+      {logOpen && (
+        <div
+          className="animate-slide-in fixed bottom-0 right-0 z-30 flex w-full max-w-[420px] p-2 sm:p-3"
+          style={{ top: headerHeight }}
+        >
+          <GameLog
+            events={events}
+            config={config}
+            onClose={() => setLogOpen(false)}
+            className="glass-strong h-full w-full"
+          />
+        </div>
+      )}
 
       {mode === "replay" && onSeek && totalEvents !== undefined && (
         <div className="glass relative z-10 flex shrink-0 items-center gap-3 border-0 border-t px-4 py-2">

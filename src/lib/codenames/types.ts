@@ -90,6 +90,16 @@ export interface GameState {
   createdAt: number;
 }
 
+/** OpenRouter `reasoning.effort` levels, from none to max. */
+export type ReasoningEffort =
+  | "none"
+  | "minimal"
+  | "low"
+  | "medium"
+  | "high"
+  | "xhigh"
+  | "max";
+
 export interface SeatConfig {
   seat: Seat;
   modelId: string;
@@ -98,6 +108,11 @@ export interface SeatConfig {
   displayName: string;
   /** Played by the person at the keyboard instead of a model. */
   human?: boolean;
+  /**
+   * Reasoning effort for models that support it. Unset means the app default
+   * ("low"), adapted to what the model accepts.
+   */
+  reasoningEffort?: ReasoningEffort;
 }
 
 export interface GameConfig {
@@ -139,6 +154,17 @@ export interface EventMeta {
   finishReason?: string;
   /** Upstream retries (429/5xx/network) before this response. */
   retries?: number;
+  /** Reasoning effort actually sent for this call. */
+  reasoningEffort?: ReasoningEffort;
+  /** Output token budget (max_tokens) sent for this call. */
+  maxTokens?: number;
+  /** The first answer ran out of tokens and was retried with less reasoning. */
+  lengthRetry?: boolean;
+  /**
+   * How a malformed answer was rescued: JSON written as text instead of a tool
+   * call, truncated arguments, or identical duplicate calls.
+   */
+  recovered?: "text" | "salvaged" | "deduped";
 }
 
 type EventBase = {

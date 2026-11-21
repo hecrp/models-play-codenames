@@ -47,9 +47,13 @@ const DESCRIPTIONS = {
   },
 } satisfies Record<Language, Record<string, string>>;
 
-function buildTools(lang: Language) {
+function buildTools(lang: Language, withReasoning: boolean) {
   const d = DESCRIPTIONS[lang];
-  const reasoning = { type: "string", maxLength: 300, description: d.reasoning };
+  // Models that already reason natively do not get a reasoning argument: it
+  // duplicates tokens and is where truncated or corrupted JSON showed up.
+  const reasoning = withReasoning
+    ? { reasoning: { type: "string", maxLength: 300, description: d.reasoning } }
+    : {};
   const say = { type: "string", maxLength: 180, description: d.say };
 
   const giveClue = (ownWords?: string[]): FunctionTool => ({
@@ -74,7 +78,7 @@ function buildTools(lang: Language) {
             description: d.targets,
           },
           say,
-          reasoning,
+          ...reasoning,
         },
       },
     },
@@ -96,7 +100,7 @@ function buildTools(lang: Language) {
             description: d.guessWord,
           },
           say,
-          reasoning,
+          ...reasoning,
         },
       },
     },
@@ -110,7 +114,7 @@ function buildTools(lang: Language) {
       parameters: {
         type: "object",
         additionalProperties: false,
-        properties: { say, reasoning },
+        properties: { say, ...reasoning },
       },
     },
   };
@@ -118,12 +122,25 @@ function buildTools(lang: Language) {
   return { giveClue, guess, stop };
 }
 
-const TOOLS = { es: buildTools("es"), en: buildTools("en") };
+const TOOLS = {
+  es: { plain: buildTools("es", true), reasoning: buildTools("es", false) },
+  en: { plain: buildTools("en", true), reasoning: buildTools("en", false) },
+};
 
-export const GIVE_CLUE_TOOL = TOOLS.es.giveClue();
+export const GIVE_CLUE_TOOL = TOOLS.es.plain.giveClue();
 
-export function toolsForSeat(seat: Seat, view?: AgentView): FunctionTool[] {
-  const tools = TOOLS[view?.lang ?? "es"];
+export interface ToolOptions {
+  /** Offer the optional `reasoning` argument (default true). */
+  reasoningField?: boolean;
+}
+
+export function toolsForSeat(
+  seat: Seat,
+  view?: AgentView,
+  options: ToolOptions = {},
+): FunctionTool[] {
+  const set = TOOLS[view?.lang ?? "es"];
+  const tools = options.reasoningField === false ? set.reasoning : set.plain;
   if (roleOfSeat(seat) === "spymaster") return [tools.giveClue(view?.ownWords ?? undefined)];
   const hidden = view?.board.filter((card) => !card.revealed).map((card) => card.word);
   if (!view || !hidden || hidden.length === 0) return [tools.guess(), tools.stop];

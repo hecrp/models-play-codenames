@@ -243,10 +243,16 @@ export function Avatar({
 }) {
   const ring =
     team === "red"
-      ? "border-team-red/80 shadow-[0_0_18px_-2px_var(--team-red)]"
+      ? "border-team-red/80"
       : team === "blue"
-        ? "border-team-blue/80 shadow-[0_0_18px_-2px_var(--team-blue)]"
-        : "border-line-strong shadow-none";
+        ? "border-team-blue/80"
+        : "border-line-strong";
+  // The glow scales with the avatar: 18px at the default 48px, about 9px in
+  // the chat, so small avatars don't sit in a halo larger than themselves.
+  const glow =
+    team === null
+      ? undefined
+      : `0 0 ${Math.round(size * 0.375)}px -2px var(--team-${team})`;
 
   return (
     <span
@@ -256,7 +262,7 @@ export function Avatar({
         active ? "opacity-100" : "opacity-45 grayscale",
         className,
       )}
-      style={{ width: size, height: size }}
+      style={{ width: size, height: size, boxShadow: glow }}
     >
       <AvatarArt id={avatar.id} size={size - 4} label={avatar.name} />
     </span>

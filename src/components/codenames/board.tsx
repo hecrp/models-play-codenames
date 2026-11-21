@@ -272,7 +272,7 @@ export function Board({
       role="grid"
       aria-label={t.board}
       className={cn(
-        "cn-board mx-auto grid w-full max-w-[900px] grid-cols-5 gap-1.5 p-2 sm:gap-2.5 sm:p-3.5 lg:max-w-[min(880px,calc((100dvh-370px)*1.357))] xl:max-w-[min(880px,calc((100dvh-220px)*1.43))]",
+        "cn-board mx-auto grid w-full max-w-[900px] grid-cols-5 gap-1.5 p-2 sm:gap-2.5 sm:p-3.5 lg:max-w-[min(880px,calc((100dvh-220px)*1.43))]",
         shake && "animate-shake",
       )}
     >

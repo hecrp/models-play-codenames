@@ -1,8 +1,9 @@
 import { findModel, supportsToolCalling } from "@/lib/server/model-catalog";
 import { completeWithTools, estimateCost, OpenRouterError } from "@/lib/server/openrouter";
-import { parseToolCall } from "@/lib/codenames/action-parser";
+import { extractJsonObject, parseToolCall } from "@/lib/codenames/action-parser";
 import { gameText } from "@/lib/codenames/messages";
 import { buildAgentPrompt, PROMPT_VERSION } from "@/lib/codenames/prompts";
+import { lowerEffort, outputBudget, resolveEffort } from "@/lib/codenames/reasoning";
 import { roleOfSeat } from "@/lib/codenames/seats";
 import { toolChoiceForSeat, toolsForSeat } from "@/lib/codenames/tools";
 import type { ModelInfo } from "@/lib/types";
@@ -11,14 +12,21 @@ import type {
   AgentRequest,
   AgentResponse,
   EventMeta,
+  GameAction,
+  Language,
+  OracleErrorCode,
+  ReasoningEffort,
+  Seat,
 } from "@/lib/codenames/types";
 
 export interface OpenRouterAgentOptions {
   apiKey: string;
   models: readonly ModelInfo[];
   timeoutMs?: number;
+  /** Fixed output budget; by default it grows with the reasoning effort. */
   maxTokens?: number;
-  reasoningEffort?: "low" | "medium" | "high";
+  /** Default effort for seats that do not choose one. */
+  reasoningEffort?: ReasoningEffort;
   /** OpenRouter provider routing (e.g. pin a provider for reproducible studies). */
   provider?: Record<string, unknown>;
 }
@@ -53,6 +61,64 @@ function metaFromCompletion(
   };
 }
 
+type Completion = Awaited<ReturnType<typeof completeWithTools>>;
+
+type Interpretation =
+  | { ok: true; action: GameAction; recovered?: EventMeta["recovered"] }
+  | { ok: false; code: OracleErrorCode; message: string };
+
+/**
+ * Turn a completion into a game action, rescuing the malformed answers seen in
+ * real games: the call written as JSON text, identical duplicate calls, and
+ * arguments cut off or corrupted mid-JSON.
+ */
+function interpret(completion: Completion, seat: Seat, lang: Language): Interpretation {
+  const text = gameText(lang);
+  const isSpymaster = roleOfSeat(seat) === "spymaster";
+  let calls = completion.toolCalls;
+  let recovered: EventMeta["recovered"];
+
+  if (calls.length === 0) {
+    const json = completion.content ? extractJsonObject(completion.content) : null;
+    if (!json) {
+      return {
+        ok: false,
+        code: "no_tool_call",
+        message:
+          text.noToolCall +
+          (completion.content ? text.textReceived(completion.content.slice(0, 200)) : ""),
+      };
+    }
+    const name = isSpymaster ? "give_clue" : "word" in json ? "guess" : "stop";
+    calls = [{ name, argumentsRaw: JSON.stringify(json) }];
+    recovered = "text";
+  }
+
+  if (calls.length > 1) {
+    const [first] = calls;
+    const identical = calls.every(
+      (call) => call.name === first.name && call.argumentsRaw === first.argumentsRaw,
+    );
+    if (!identical) {
+      return { ok: false, code: "multiple_tool_calls", message: text.multipleToolCalls };
+    }
+    calls = [first];
+    recovered ??= "deduped";
+  }
+
+  const parsed = parseToolCall(calls[0].name, calls[0].argumentsRaw, lang);
+  if (!parsed.ok) return parsed;
+  if (parsed.salvaged) recovered ??= "salvaged";
+
+  if (isSpymaster && parsed.action.type !== "give_clue") {
+    return { ok: false, code: "invalid_action", message: text.spymasterMustClue };
+  }
+  if (!isSpymaster && parsed.action.type === "give_clue") {
+    return { ok: false, code: "invalid_action", message: text.operativeMustGuess };
+  }
+  return { ok: true, action: parsed.action, ...(recovered ? { recovered } : {}) };
+}
+
 export function createOpenRouterAgentAdapter(
   options: OpenRouterAgentOptions,
 ): AgentAdapter {
@@ -73,40 +139,49 @@ export function createOpenRouterAgentAdapter(
         };
       }
 
+      // The seat's own choice wins over the adapter default; both adapt to
+      // what the model accepts. Undefined for models that do not reason.
+      const effort = resolveEffort(
+        model,
+        request.config.reasoningEffort ?? options.reasoningEffort,
+      );
+      // Models reasoning natively skip the reasoning argument and its prompt note.
+      const reasoningField = effort === undefined || effort === "none";
       const { system, user } = buildAgentPrompt(
         request.seat,
         request.view,
         request.feedback,
+        { reasoningField },
       );
+      const tools = toolsForSeat(request.seat, request.view, { reasoningField });
       const supportsTemperature =
         !model ||
         model.supportedParameters.length === 0 ||
         model.supportedParameters.includes("temperature");
 
-      let completion: Awaited<ReturnType<typeof completeWithTools>>;
-      try {
-        completion = await completeWithTools({
+      const call = (callEffort: ReasoningEffort | undefined, maxTokens: number) =>
+        completeWithTools({
           apiKey: options.apiKey,
           model: request.config.modelId,
           systemPrompt: system,
           userPrompt: user,
-          tools: toolsForSeat(request.seat, request.view),
+          tools,
           toolChoice: toolChoiceForSeat(request.seat),
-          temperature: supportsTemperature
-            ? request.config.temperature
-            : undefined,
-          maxTokens: options.maxTokens ?? 2000,
+          temperature: supportsTemperature ? request.config.temperature : undefined,
+          maxTokens,
           timeoutMs: options.timeoutMs ?? 60_000,
-          includeReasoning: model?.supportsReasoning ?? false,
-          reasoningEffort: options.reasoningEffort ?? "low",
+          includeReasoning: callEffort !== undefined,
+          reasoningEffort: callEffort,
           provider: options.provider,
           signal: request.signal,
           lang,
         });
-      } catch (caught) {
+
+      const failure = (caught: unknown, cost?: number): AgentResponse => {
         const meta: EventMeta = {
           modelId: model?.id,
           promptVersion: PROMPT_VERSION,
+          ...(cost ? { costUsd: cost } : {}),
         };
         if (caught instanceof OpenRouterError) {
           if (caught.aborted) {
@@ -139,85 +214,61 @@ export function createOpenRouterAgentAdapter(
           action: null,
           error: {
             code: "invalid_action",
-            message:
-              caught instanceof Error
-                ? caught.message
-                : text.unknownModelError,
+            message: caught instanceof Error ? caught.message : text.unknownModelError,
             fatal: true,
           },
           meta,
         };
+      };
+
+      let usedEffort = effort;
+      let maxTokens = options.maxTokens ?? outputBudget(model, effort);
+      let completion: Completion;
+      try {
+        completion = await call(usedEffort, maxTokens);
+      } catch (caught) {
+        return failure(caught);
+      }
+      let result = interpret(completion, request.seat, lang);
+
+      // Ran out of tokens before a usable move (usually reasoning ate the
+      // budget): retry once with less reasoning and more room, instead of
+      // spending one of the seat's three attempts on a technical failure.
+      let lengthRetry = false;
+      let earlierCost = 0;
+      if (!result.ok && completion.finishReason === "length") {
+        earlierCost = metaFromCompletion(completion, model, PROMPT_VERSION).costUsd ?? 0;
+        usedEffort = usedEffort ? (lowerEffort(model, usedEffort) ?? usedEffort) : undefined;
+        const limit = model?.maxOutputTokens;
+        maxTokens = Math.round(maxTokens * 1.5);
+        if (limit && limit > 0) maxTokens = Math.min(maxTokens, limit);
+        try {
+          completion = await call(usedEffort, maxTokens);
+        } catch (caught) {
+          return failure(caught, earlierCost);
+        }
+        result = interpret(completion, request.seat, lang);
+        lengthRetry = true;
       }
 
-      const meta = metaFromCompletion(completion, model, PROMPT_VERSION);
+      const base = metaFromCompletion(completion, model, PROMPT_VERSION);
+      const meta: EventMeta = {
+        ...base,
+        ...(earlierCost ? { costUsd: (base.costUsd ?? 0) + earlierCost } : {}),
+        ...(usedEffort ? { reasoningEffort: usedEffort } : {}),
+        maxTokens,
+        ...(lengthRetry ? { lengthRetry } : {}),
+        ...(result.ok && result.recovered ? { recovered: result.recovered } : {}),
+      };
 
-      if (completion.toolCalls.length === 0) {
+      if (!result.ok) {
         return {
           action: null,
-          error: {
-            code: "no_tool_call",
-            message:
-              text.noToolCall +
-              (completion.content
-                ? text.textReceived(completion.content.slice(0, 200))
-                : ""),
-            fatal: false,
-          },
+          error: { code: result.code, message: result.message, fatal: false },
           meta,
         };
       }
-
-      if (completion.toolCalls.length > 1) {
-        return {
-          action: null,
-          error: {
-            code: "multiple_tool_calls",
-            message: text.multipleToolCalls,
-            fatal: false,
-          },
-          meta,
-        };
-      }
-
-      const call = completion.toolCalls[0];
-      const parsed = parseToolCall(call.name, call.argumentsRaw, lang);
-      if (!parsed.ok) {
-        return {
-          action: null,
-          error: {
-            code: parsed.code,
-            message: parsed.message,
-            fatal: false,
-          },
-          meta,
-        };
-      }
-
-      const isSpymaster = roleOfSeat(request.seat) === "spymaster";
-      if (isSpymaster && parsed.action.type !== "give_clue") {
-        return {
-          action: null,
-          error: {
-            code: "invalid_action",
-            message: text.spymasterMustClue,
-            fatal: false,
-          },
-          meta,
-        };
-      }
-      if (!isSpymaster && parsed.action.type === "give_clue") {
-        return {
-          action: null,
-          error: {
-            code: "invalid_action",
-            message: text.operativeMustGuess,
-            fatal: false,
-          },
-          meta,
-        };
-      }
-
-      return { action: parsed.action, error: undefined, meta };
+      return { action: result.action, error: undefined, meta };
     },
   };
 }
