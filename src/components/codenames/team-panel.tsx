@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { Brain, Crown, Eye, Hand, RotateCcw, WifiOff, X } from "lucide-react";
+import { Brain, Crosshair, Crown, Eye, EyeOff, Hand, RotateCcw, WifiOff, X } from "lucide-react";
 import type {
   GameState,
   GuessResult,
@@ -15,18 +15,29 @@ import { operativeSeat, spymasterSeat, teamOfSeat } from "@/lib/codenames/seats"
 import {
   buildTeamThread,
   type Forfeit,
+  type TargetOutcome,
   type ThreadItem,
 } from "@/lib/codenames/team-thread";
 import { useStrings, type Locale } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui";
 import { Avatar } from "./avatar";
+import { TARGET_MARKS } from "./board";
 
 const ES = {
   team: { red: "rojo", blue: "azul" } as Record<Team, string>,
   teamAria: (team: string) => `Equipo ${team}`,
   chatAria: (team: string) => `Conversación del equipo ${team}`,
   showReasoning: "Razonamiento",
+  targets: "Objetivos",
+  showOnBoard: "Ver en el tablero",
+  hideOnBoard: "Quitar del tablero",
+  outcomes: {
+    hit: () => "Encontrada en ese mismo turno",
+    later: (turn?: number) => `Encontrada más tarde${turn ? ` (turno ${turn})` : ""}`,
+    rival: (turn?: number) => `La descubrió el rival${turn ? ` (turno ${turn})` : ""}`,
+    pending: () => "Todavía sin descubrir",
+  } as Record<TargetOutcome, (turn?: number) => string>,
   showReasoningAria: (name: string) => `Ver el razonamiento de ${name}`,
   reasoningOf: (name: string) => `Razonamiento de ${name}`,
   roleTurn: (role: string, turn: number) => `${role} · turno ${turn}`,
@@ -51,6 +62,8 @@ const ES = {
   connection: "Problema de conexión, reintentando",
   turnN: (turn: number) => `Turno ${turn}`,
   clue: "Pista",
+  aside: "Aparte para el público",
+  asideHint: "En Codenames el jefe solo dice la pista: ningún jugador lee este comentario.",
   unlimited: "sin límite",
   stops: "Me planto",
   spymaster: "Jefe",
@@ -73,6 +86,15 @@ const STRINGS: Record<Locale, typeof ES> = {
     teamAria: (team) => `Team ${team}`,
     chatAria: (team) => `Team ${team} conversation`,
     showReasoning: "Reasoning",
+    targets: "Targets",
+    showOnBoard: "Show on board",
+    hideOnBoard: "Hide from board",
+    outcomes: {
+      hit: () => "Found on that same turn",
+      later: (turn) => `Found later${turn ? ` (turn ${turn})` : ""}`,
+      rival: (turn) => `Revealed by the rival${turn ? ` (turn ${turn})` : ""}`,
+      pending: () => "Not found yet",
+    },
     showReasoningAria: (name) => `Show ${name}'s reasoning`,
     reasoningOf: (name) => `${name}'s reasoning`,
     roleTurn: (role, turn) => `${role} · turn ${turn}`,
@@ -97,6 +119,8 @@ const STRINGS: Record<Locale, typeof ES> = {
     connection: "Connection problem, retrying",
     turnN: (turn) => `Turn ${turn}`,
     clue: "Clue",
+    aside: "Aside to the audience",
+    asideHint: "In Codenames the spymaster only says the clue: no player reads this line.",
     unlimited: "unlimited",
     stops: "I'll stop here",
     spymaster: "Spymaster",
@@ -184,6 +208,7 @@ function Bubble({
 }
 
 type MessageItem = Extract<ThreadItem, { kind: "clue" | "guess" | "stop" }>;
+export type ClueItem = Extract<ThreadItem, { kind: "clue" }>;
 
 /** What the move was, as one line, so the reasoning reads in context. */
 function MoveSummary({ item, team }: { item: MessageItem; team: Team }) {
@@ -367,7 +392,18 @@ function Message({
   lastOfGroup,
   onShowReasoning,
   animate,
+  showIntent,
+  focused,
+  onFocus,
+  hideAsides,
 }: {
+  /** A human operative is playing: the spymasters' asides are not for them. */
+  hideAsides: boolean;
+  /** Show what the spymaster aimed at (finished games and replays only). */
+  showIntent: boolean;
+  /** This clue's targets are marked on the board. */
+  focused: boolean;
+  onFocus: () => void;
   item: MessageItem;
   team: Team;
   config: SeatConfig;
@@ -380,9 +416,11 @@ function Message({
 }) {
   const t = useStrings(STRINGS);
   // The move itself (clue, card, stop) shows once the text has typed out.
-  const [streamed, setStreamed] = useState(() => !animate || !item.say);
   const styles = TEAM_STYLES[team];
   const isSpymaster = item.seat === spymasterSeat(team);
+  // The spymaster only says the clue: their line is an aside the players never read.
+  const say = isSpymaster && hideAsides ? undefined : item.say;
+  const [streamed, setStreamed] = useState(() => !animate || !say);
   const side = isSpymaster ? "left" : "right";
   const avatar = avatarById(config.avatarId);
 
@@ -419,21 +457,35 @@ function Message({
           </span>
         )}
         <Bubble side={side} team={team} showTail={lastOfGroup}>
-          {item.say && (
-            <StreamingText text={item.say} animate={animate} onDone={() => setStreamed(true)} />
+          {say && isSpymaster && (
+            <span
+              className="mb-0.5 flex items-center gap-1 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-faint"
+              title={t.asideHint}
+            >
+              <EyeOff size={9} className="shrink-0" />
+              {t.aside}
+            </span>
+          )}
+          {say && (
+            <div className={cn(isSpymaster && "italic text-ink-soft")}>
+              <StreamingText text={say} animate={animate} onDone={() => setStreamed(true)} />
+            </div>
           )}
           {streamed && item.kind === "clue" && (
             <span
               className={cn(
                 "flex items-center gap-1.5 rounded-xl border border-line/70 bg-canvas/70 py-1 pl-2 pr-1",
-                item.say && "mt-1.5",
+                say && "mt-1.5",
                 animate && "animate-fade-in",
               )}
             >
               <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-faint">
                 {t.clue}
               </span>
-              <span className="min-w-0 truncate font-display text-[15px] font-semibold uppercase leading-none tracking-wider text-ink">
+              <span
+                className="min-w-0 truncate font-display text-[15px] font-semibold uppercase leading-none tracking-wider text-ink"
+                title={item.word}
+              >
                 {item.word}
               </span>
               <span
@@ -447,11 +499,34 @@ function Message({
               </span>
             </span>
           )}
+          {streamed && showIntent && item.kind === "clue" && item.targets && item.targets.length > 0 && (
+            <span className={cn("mt-1.5 flex flex-wrap items-center gap-1", animate && "animate-fade-in")}>
+              <span className="text-[9.5px] font-semibold uppercase tracking-[0.14em] text-faint">
+                {t.targets}
+              </span>
+              {item.targets.map((target) => (
+                <span
+                  key={target.word}
+                  title={t.outcomes[target.outcome](target.turn)}
+                  className="inline-flex items-center gap-1 rounded-full border border-line/70 bg-canvas/60 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-ink-soft"
+                >
+                  <span
+                    className="grid size-3.5 place-items-center rounded-full text-[8.5px] font-bold text-white"
+                    style={{ background: TARGET_MARKS[target.outcome].color }}
+                    aria-hidden="true"
+                  >
+                    {TARGET_MARKS[target.outcome].icon}
+                  </span>
+                  {target.word}
+                </span>
+              ))}
+            </span>
+          )}
           {streamed && item.kind === "guess" && (
             <span
               className={cn(
                 "flex flex-wrap items-center gap-1.5",
-                item.say && "mt-1.5",
+                say && "mt-1.5",
                 animate && "animate-fade-in",
               )}
             >
@@ -472,7 +547,7 @@ function Message({
             <span
               className={cn(
                 "inline-flex items-center gap-1 text-[11.5px] font-semibold text-muted",
-                item.say && "mt-1.5",
+                say && "mt-1.5",
                 animate && "animate-fade-in",
               )}
             >
@@ -481,16 +556,34 @@ function Message({
             </span>
           )}
         </Bubble>
-        {onShowReasoning && streamed && (
-          <button
-            type="button"
-            onClick={onShowReasoning}
-            aria-label={t.showReasoningAria(config.displayName)}
-            className="inline-flex items-center gap-1 rounded-md px-1 py-px text-[10.5px] font-medium text-faint transition-colors hover:bg-hover hover:text-ink"
-          >
-            <Brain size={11} />
-            {t.showReasoning}
-          </button>
+        {streamed && (onShowReasoning || (showIntent && item.kind === "clue" && (item.targets?.length ?? 0) > 0)) && (
+          <div className="flex flex-wrap items-center gap-0.5 whitespace-nowrap">
+            {onShowReasoning && (
+              <button
+                type="button"
+                onClick={onShowReasoning}
+                aria-label={t.showReasoningAria(config.displayName)}
+                className="inline-flex items-center gap-1 rounded-md px-1 py-px text-[10.5px] font-medium text-faint transition-colors hover:bg-hover hover:text-ink"
+              >
+                <Brain size={11} />
+                {t.showReasoning}
+              </button>
+            )}
+            {showIntent && item.kind === "clue" && (item.targets?.length ?? 0) > 0 && (
+              <button
+                type="button"
+                onClick={onFocus}
+                aria-pressed={focused}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-md px-1 py-px text-[10.5px] font-medium transition-colors",
+                  focused ? "bg-accent-soft text-accent" : "text-faint hover:bg-hover hover:text-ink",
+                )}
+              >
+                <Crosshair size={11} />
+                {focused ? t.hideOnBoard : t.showOnBoard}
+              </button>
+            )}
+          </div>
         )}
       </div>
     </div>
@@ -683,13 +776,24 @@ export function TeamPanel({
   thinking,
   events,
   className,
+  showIntent = false,
+  focusedClueId = null,
+  onFocusClue,
+  hideAsides = false,
 }: {
+  /** A human operative is playing: hide the spymasters' asides. */
+  hideAsides?: boolean;
   team: Team;
   configs: Record<Seat, SeatConfig>;
   state: GameState;
   thinking: Seat | null;
   events: StoredGameEvent[];
   className?: string;
+  /** Show each clue's targets and their fate (finished games and replays). */
+  showIntent?: boolean;
+  /** Id of the clue whose targets the board shows. */
+  focusedClueId?: string | null;
+  onFocusClue?: (clue: ClueItem | null) => void;
 }) {
   const t = useStrings(STRINGS);
   const spymaster = spymasterSeat(team);
@@ -866,6 +970,13 @@ export function TeamPanel({
                 lastOfGroup={lastOfGroup}
                 onShowReasoning={item.thought ? () => setReading(item) : undefined}
                 animate={fresh.has(item.id)}
+                showIntent={showIntent}
+                hideAsides={hideAsides}
+                focused={focusedClueId === item.id}
+                onFocus={() =>
+                  item.kind === "clue" &&
+                  onFocusClue?.(focusedClueId === item.id ? null : item)
+                }
               />
             );
           })

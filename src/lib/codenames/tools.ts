@@ -15,8 +15,10 @@ const DESCRIPTIONS = {
     reasoning:
       "Razonamiento privado breve (opcional). Nunca se envía a los demás modelos ni se muestra como diálogo.",
     say: "OBLIGATORIO. Una frase corta (máx. 180 caracteres) de charla de mesa, en español y en primera persona, que acompañe a tu jugada: cómo te suena la pista, qué dudas tienes, qué intentas o cómo provocas al rival. Se muestra en pantalla y los demás jugadores la leen. Nunca reveles colores ocultos, el asesino ni información privada.",
+    clueSay:
+      "OBLIGATORIO. Un aparte corto (máx. 180 caracteres) para el público humano, en español y en primera persona: cómo ves la jugada o cómo provocas al rival. Ningún modelo lo lee, tampoco tu agente. No menciones tus cartas objetivo, colores ocultos ni el asesino.",
     giveClue:
-      "Da una pista de Codenames: una sola palabra y un número del 0 al 9, acompañada de una frase breve de charla.",
+      "Da una pista de Codenames: una sola palabra y un número del 0 al 9, más un aparte breve para el público.",
     clueWord:
       "Una sola palabra en español, sin espacios ni guiones, relacionada por significado con tus cartas. No puede ser una carta sin revelar, ni una forma suya (plural, derivado) ni una palabra compuesta que la incluya.",
     clueNumber:
@@ -32,8 +34,10 @@ const DESCRIPTIONS = {
     reasoning:
       "Short private reasoning (optional). It is never sent to the other models nor shown as dialogue.",
     say: "REQUIRED. A short line (max 180 characters) of table talk, in English and in first person, to go with your move: how the clue sounds to you, what you doubt, what you are trying or how you tease the rival. It is shown on screen and read by the other players. Never reveal hidden colors, the assassin or private information.",
+    clueSay:
+      "REQUIRED. A short aside (max 180 characters) for the human audience, in English and in first person: how you see the move or how you tease the rival. No model reads it, not even your operative. Do not mention your target cards, hidden colors or the assassin.",
     giveClue:
-      "Give a Codenames clue: one single word and a number from 0 to 9, with a short line of table talk.",
+      "Give a Codenames clue: one single word and a number from 0 to 9, plus a short aside for the audience.",
     clueWord:
       "One single English word, without spaces or hyphens, related by meaning to your cards. It cannot be an unrevealed card, a form of one (plural, derived word) or a compound word that includes one.",
     clueNumber:
@@ -55,6 +59,8 @@ function buildTools(lang: Language, withReasoning: boolean) {
     ? { reasoning: { type: "string", maxLength: 300, description: d.reasoning } }
     : {};
   const say = { type: "string", maxLength: 180, description: d.say };
+  // The spymaster's line never reaches the players: only the audience sees it.
+  const clueSay = { type: "string", maxLength: 180, description: d.clueSay };
 
   const giveClue = (ownWords?: string[]): FunctionTool => ({
     type: "function",
@@ -77,7 +83,7 @@ function buildTools(lang: Language, withReasoning: boolean) {
             },
             description: d.targets,
           },
-          say,
+          say: clueSay,
           ...reasoning,
         },
       },

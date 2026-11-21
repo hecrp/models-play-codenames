@@ -3,6 +3,20 @@ import type { GuessResult, Seat, StoredGameEvent, Team } from "./types";
 
 export type Forfeit = "clue_failed" | "attempts_exhausted";
 
+/**
+ * What became of a card the spymaster aimed a clue at: found on that same
+ * turn, found by the team on a later turn, revealed by the rival, or not
+ * found yet (in the events seen so far).
+ */
+export type TargetOutcome = "hit" | "later" | "rival" | "pending";
+
+export interface ClueTarget {
+  word: string;
+  outcome: TargetOutcome;
+  /** Turn the card was revealed, when it was. */
+  turn?: number;
+}
+
 /** What a model thought before a move, when the game kept it. */
 export interface ThreadThought {
   /** The model's own reasoning (reasoning tokens), when the provider returns it. */
@@ -26,7 +40,13 @@ interface MessageBase {
 
 export type ThreadItem =
   | { kind: "turn"; id: string; turn: number }
-  | (MessageBase & { kind: "clue"; word: string; number: number })
+  | (MessageBase & {
+      kind: "clue";
+      word: string;
+      number: number;
+      /** The cards the clue aimed at and their fate; absent when not declared or redacted. */
+      targets?: ClueTarget[];
+    })
   | (MessageBase & { kind: "guess"; word: string; result: GuessResult })
   | (MessageBase & { kind: "stop" })
   | { kind: "forfeit"; id: string; reason: Forfeit }
@@ -54,11 +74,44 @@ function thoughtOf(event: StoredGameEvent): ThreadThought | undefined {
   };
 }
 
+/** Same normalization as the engine, kept local so the client bundle stays light. */
+function normalize(word: string): string {
+  return word.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
+/** Which team revealed each card, and on which turn. */
+function revealsByWord(events: StoredGameEvent[]): Map<string, { team: Team; turn: number }> {
+  const reveals = new Map<string, { team: Team; turn: number }>();
+  let turn = 0;
+  for (const event of events) {
+    if (event.type === "turn_started") turn = event.data.turn;
+    if (event.type === "guess_made") {
+      const key = normalize(event.data.word);
+      if (!reveals.has(key)) reveals.set(key, { team: teamOfSeat(event.seat), turn });
+    }
+  }
+  return reveals;
+}
+
+function targetOf(
+  word: string,
+  team: Team,
+  clueTurn: number,
+  reveals: Map<string, { team: Team; turn: number }>,
+): ClueTarget {
+  const reveal = reveals.get(normalize(word));
+  if (!reveal) return { word, outcome: "pending" };
+  const outcome: TargetOutcome =
+    reveal.team !== team ? "rival" : reveal.turn === clueTurn ? "hit" : "later";
+  return { word, outcome, turn: reveal.turn };
+}
+
 /**
  * One team's conversation: the spymaster's clues and the operative's guesses,
  * grouped by turn like a chat between the two seats.
  */
 export function buildTeamThread(events: StoredGameEvent[], team: Team): ThreadItem[] {
+  const reveals = revealsByWord(events);
   const items: ThreadItem[] = [];
   let turn = 0;
   for (const event of events) {
@@ -79,6 +132,9 @@ export function buildTeamThread(events: StoredGameEvent[], team: Team): ThreadIt
             number: event.data.number,
             say: event.data.say,
             thought: thoughtOf(event),
+            ...(event.data.targets
+              ? { targets: event.data.targets.map((word) => targetOf(word, team, turn, reveals)) }
+              : {}),
           });
         }
         break;

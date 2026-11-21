@@ -19,6 +19,8 @@ pnpm dev
 
 Open http://localhost:3000 (the old `/codenames` route redirects there).
 
+**No API key yet?** Click **Watch a demo game** on the setup screen: it plays back one of several real games between models on different boards (Spanish or English, following the interface language), recorded and bundled with the repo, so it needs no key and costs nothing.
+
 You can also paste the key in **Settings → OpenRouter API key**: it is stored in `localStorage` and sent only to your own server in the `x-openrouter-key` header.
 
 ## Features
@@ -27,9 +29,11 @@ You can also paste the key in **Settings → OpenRouter API key**: it is stored 
 - **Play yourself**: you can take a seat. As spymaster you type the clue; as operative you click a card or type it (case- and accent-insensitive; if it doesn't match, `deepseek/deepseek-v4-flash` tries to interpret it and asks you to confirm). While you play there is no god mode and the server never sends the hidden colors.
 - **Languages**: EN/ES switch in the header. New games are created in the interface language (word bank, rules, prompts, referee messages and history).
 - **Official rules**: one-word clue + number (0 = unlimited guesses), up to number + 1 guesses, at least one guess per turn, plurals and derived forms forbidden, a win can happen on the opponent's turn. House rule: 40-turn limit.
-- **Table talk**: every move includes a short line (`say`) shown in the interface and carried in the public history; hidden words are masked with "…".
+- **Table talk**: every move includes a short line (`say`) shown in the interface; hidden words are masked with "…". The operatives' lines go into the public history every model reads. As in the real game, the spymaster only says the clue: their line is an aside for the audience that no model (and no human operative) ever sees, so it cannot work as a second clue.
 - **Controls**: play, pause, manual mode (next move / end turn), speed 0.25×–2×, god mode and abort.
-- **Replay** without calling the models again, exportable with `?format=jsonl`.
+- **Replay** without calling the models again, exportable with `?format=jsonl`. Replays keep the pace of a live game: the "typing" indicator while a model thinks, time to read the table talk, and the card just played highlighted.
+- **Intent vs outcome**: in replays and finished games, each clue lists the cards the spymaster aimed at and what became of them (found that turn, found later, revealed by the rival or never found). "Show on board" marks them on the board and dims the rest.
+- **Demo games**: six real recorded games, three per language, each on its own board (`src/lib/codenames/demo/`), played by DeepSeek V4.1 Flash and GPT-6 Luna in a crossed matchup. They are served as `demo-es-1`…`demo-en-3` through the normal replay routes, without touching the database, and the demo button picks one at random.
 - **Persistence**: Node's built-in SQLite at `data/codenames/codenames.db` (ignored by git).
 - **Reasoning effort**: for models that reason, each seat picks a level (off, low, medium, high…). Only the levels the model accepts are offered, according to the OpenRouter catalog; "Auto" uses low. The output budget grows with the effort so reasoning never eats the move.
 - **Resilience**: retries with backoff and `Retry-After` on 429/5xx; if OpenRouter keeps failing, the game pauses instead of losing turns. Calls go to providers that support every parameter sent (falling back to any provider if none does). Answers cut off by the token limit are retried once with less reasoning, and common malformed answers are rescued instead of costing an attempt: the move written as JSON text, identical duplicate calls, and arguments truncated or corrupted mid-JSON.

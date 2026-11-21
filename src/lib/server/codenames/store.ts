@@ -8,6 +8,7 @@ import type {
   Winner,
 } from "@/lib/codenames/types";
 import type { GameMetrics } from "@/lib/codenames/metrics";
+import { getDemoEvents, getDemoGame, isDemoGameId } from "./demo-games";
 
 export type { GameMetrics } from "@/lib/codenames/metrics";
 
@@ -198,6 +199,8 @@ export function createGameRecord(input: CreateGameInput): GameRecord {
 }
 
 export function getGame(id: string): GameRecord | null {
+  // Bundled demo replays are read-only and live outside the database.
+  if (isDemoGameId(id)) return getDemoGame(id);
   const db = getDb();
   const row = db
     .prepare(
@@ -304,6 +307,7 @@ export function getEvents(
   after = 0,
   limit = 5000,
 ): StoredGameEvent[] {
+  if (isDemoGameId(gameId)) return getDemoEvents(gameId, after).slice(0, limit);
   const db = getDb();
   const rows = db
     .prepare(

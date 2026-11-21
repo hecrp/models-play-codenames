@@ -10,8 +10,11 @@ import type {
 } from "./types";
 
 /**
- * Public history: everything a spectator can see. It never includes hidden
- * card colors (only revealed ones) nor any model reasoning.
+ * Public history, as the players hear it: what is said at the table. It never
+ * includes hidden card colors (only revealed ones) nor any model reasoning.
+ * The spymaster's table talk is left out too: in Codenames the spymaster says
+ * only the clue word and number, so their line is an aside for the audience
+ * that no model reads.
  */
 export function buildPublicHistory(
   events: ReadonlyArray<EngineEvent | StoredGameEvent>,
@@ -30,9 +33,8 @@ export function buildPublicHistory(
         lines.push(h.turn(event.data.turn, text.team[event.data.team]));
         break;
       case "clue_given": {
-        const quote = event.data.say ? ` «${event.data.say}»` : "";
         lines.push(
-          h.clue(text.team[teamOfSeat(event.seat)], quote, event.data.word, event.data.number),
+          h.clue(text.team[teamOfSeat(event.seat)], "", event.data.word, event.data.number),
         );
         break;
       }
@@ -139,7 +141,12 @@ export function viewFor(
     revealed,
     turn: {
       ...state.turn,
-      clue: state.turn.clue ? { ...state.turn.clue } : null,
+      // Players get the clue alone: the spymaster's aside and reasoning stay out.
+      clue: state.turn.clue
+        ? isSpectator
+          ? { ...state.turn.clue }
+          : { word: state.turn.clue.word, number: state.turn.clue.number }
+        : null,
     },
     history: [...history],
   };

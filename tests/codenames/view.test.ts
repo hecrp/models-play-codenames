@@ -122,19 +122,48 @@ describe("table talk", () => {
     expect(say).toContain("…");
   });
 
-  it("shows the say in the public history", () => {
+  it("keeps the spymaster silent: no player reads their aside", () => {
     const { state, events } = startedGame(13);
     const team = state.turn.team;
-    const say = "Esta pista me huele a cocina.";
-    const result = ok(
+    const aside = "Dos que van de la mano en cualquier cuento.";
+    const clue = safeClue(state);
+    const given = ok(
       apply(state, spymasterSeat(team), {
         type: "give_clue",
-        word: safeClue(state),
+        word: clue,
         number: 2,
-        say,
+        say: aside,
+        reasoning: "PLAN PRIVADO",
       }),
     );
-    const history = buildPublicHistory([...events, ...result.events]).join("\n");
+    // The aside is still recorded for the audience.
+    const clueEvent = given.events.find((event) => event.type === "clue_given");
+    expect(clueEvent && "say" in clueEvent.data ? clueEvent.data.say : undefined).toBe(aside);
+
+    const history = buildPublicHistory([...events, ...given.events]).join("\n");
+    expect(history).toContain(`«${clue}» 2`);
+    expect(history).not.toContain(aside);
+
+    for (const seat of [operativeSeat(team), spymasterSeat(team === "red" ? "blue" : "red")]) {
+      const view = viewFor(seat, given.state, buildPublicHistory([...events, ...given.events]));
+      const serialized = JSON.stringify(view);
+      expect(serialized).not.toContain(aside);
+      expect(serialized).not.toContain("PLAN PRIVADO");
+      expect(view.turn.clue).toEqual({ word: clue, number: 2 });
+    }
+    expect(viewFor("spectator", given.state).turn.clue?.say).toBe(aside);
+  });
+
+  it("lets every player read the operatives' table talk", () => {
+    const { state, events } = startedGame(13);
+    const team = state.turn.team;
+    const given = ok(
+      apply(state, spymasterSeat(team), { type: "give_clue", word: safeClue(state), number: 2 }),
+    );
+    const own = given.state.board.find((card) => !card.revealed && card.color === team)!;
+    const say = "Voy a por la más clara primero.";
+    const guessed = ok(apply(given.state, operativeSeat(team), { type: "guess", word: own.word, say }));
+    const history = buildPublicHistory([...events, ...given.events, ...guessed.events]).join("\n");
     expect(history).toContain(say);
   });
 });

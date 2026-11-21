@@ -3,7 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Droplet, Fingerprint, Flame, Minus, Skull } from "lucide-react";
-import type { BoardCard } from "@/lib/codenames/types";
+import type { BoardCard, Team } from "@/lib/codenames/types";
+import type { ClueTarget, TargetOutcome } from "@/lib/codenames/team-thread";
 import { cn } from "@/lib/utils";
 import { useStrings, type Locale } from "@/lib/i18n";
 
@@ -19,6 +20,7 @@ const ES = {
   hidden: (word: string) => `${word}, oculta`,
   pick: (word: string) => `Elegir ${word}`,
   board: "Tablero de Codenames",
+  targetOf: (clue: string) => `Objetivo de la pista ${clue}`,
 };
 
 const STRINGS: Record<Locale, typeof ES> = {
@@ -35,6 +37,7 @@ const STRINGS: Record<Locale, typeof ES> = {
     hidden: (word) => `${word}, hidden`,
     pick: (word) => `Pick ${word}`,
     board: "Codenames board",
+    targetOf: (clue) => `Target of the clue ${clue}`,
   },
 };
 
@@ -79,18 +82,36 @@ function burstVectors() {
   });
 }
 
+/** Badge on a card a focused clue aimed at, by what became of it. */
+export const TARGET_MARKS: Record<TargetOutcome, { icon: string; color: string }> = {
+  hit: { icon: "✓", color: "var(--accent)" },
+  later: { icon: "↻", color: "color-mix(in oklab, var(--accent) 65%, var(--muted))" },
+  rival: { icon: "✗", color: "#f59e0b" },
+  pending: { icon: "?", color: "var(--muted)" },
+};
+
+/** A clue whose targets the board is showing. */
+export interface BoardFocus {
+  team: Team;
+  clue: string;
+  targets: ClueTarget[];
+}
+
 export function Card({
   card,
   index,
   godMode,
   highlight,
   onPick,
+  mark,
 }: {
   card: BoardCard;
   index: number;
   godMode: boolean;
   highlight: boolean;
   onPick?: (card: BoardCard) => void;
+  /** Set when the focused clue aimed at this card. */
+  mark?: { outcome: TargetOutcome; team: Team; clue: string };
 }) {
   const [burst, setBurst] = useState<ReturnType<typeof burstVectors> | null>(
     null,
@@ -137,15 +158,31 @@ export function Card({
             }
           : undefined
       }
-      style={{ "--i": index } as React.CSSProperties}
+      style={
+        {
+          "--i": index,
+          ...(mark
+            ? {
+                "--target-ring": mark.team === "red" ? "var(--team-red)" : "var(--team-blue)",
+                "--target-color": TARGET_MARKS[mark.outcome].color,
+              }
+            : {}),
+        } as React.CSSProperties
+      }
       className={cn(
         "cn-card aspect-[1.3] select-none sm:aspect-[1.45]",
         card.revealed && "is-revealed",
         highlight && "is-highlight",
+        mark && "is-target",
         pickable &&
           "cursor-pointer rounded-lg outline-none transition-transform hover:-translate-y-0.5 hover:ring-2 hover:ring-accent/70 focus-visible:ring-2 focus-visible:ring-accent",
       )}
     >
+      {mark && (
+        <span className="cn-target-badge" title={t.targetOf(mark.clue)} aria-label={t.targetOf(mark.clue)}>
+          {TARGET_MARKS[mark.outcome].icon}
+        </span>
+      )}
       <div className="cn-card-inner">
         <div className="cn-face cn-face-front">
           <Fingerprint
@@ -218,16 +255,25 @@ export function Card({
   );
 }
 
+function markFor(card: BoardCard, focus: BoardFocus | null | undefined) {
+  if (!focus) return undefined;
+  const target = focus.targets.find((entry) => entry.word === card.word);
+  return target ? { outcome: target.outcome, team: focus.team, clue: focus.clue } : undefined;
+}
+
 export function Board({
   cards,
   godMode,
   highlightWord,
   onPick,
+  focus,
 }: {
   cards: BoardCard[];
   godMode: boolean;
   highlightWord: string | null;
   onPick?: (card: BoardCard) => void;
+  /** A clue whose targets are marked, dimming the other cards. */
+  focus?: BoardFocus | null;
 }) {
   const rows = Array.from({ length: 5 }, (_, row) =>
     cards.slice(row * 5, row * 5 + 5),
@@ -272,6 +318,7 @@ export function Board({
       role="grid"
       aria-label={t.board}
       className={cn(
+        focus && "has-focus",
         "cn-board mx-auto grid w-full max-w-[900px] grid-cols-5 gap-1.5 p-2 sm:gap-2.5 sm:p-3.5 lg:max-w-[min(880px,calc((100dvh-220px)*1.43))]",
         shake && "animate-shake",
       )}
@@ -286,6 +333,7 @@ export function Board({
               godMode={godMode}
               highlight={highlightWord !== null && card.word === highlightWord}
               onPick={onPick}
+              mark={markFor(card, focus)}
             />
           ))}
         </div>

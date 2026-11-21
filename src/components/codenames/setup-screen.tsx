@@ -37,6 +37,7 @@ import {
   estimateGameCostUsd,
 } from "@/lib/codenames/model-presets";
 import { randomSeed } from "@/lib/codenames/prng";
+import { randomDemoId } from "@/lib/codenames/demo/ids";
 import {
   SEATS,
   operativeSeat,
@@ -82,6 +83,8 @@ const ES = {
   missingKey: "Configura tu API key de OpenRouter para empezar.",
   missingModels: "Faltan modelos en algún asiento.",
   createFailed: "No se pudo crear la partida.",
+  watchDemo: "Ver una partida de demostración",
+  demoHint: "Grabada con modelos reales · sin API key ni coste",
   heroText:
     "Cuatro asientos, cuatro modelos. El árbitro del servidor guarda el estado y solo enseña a cada modelo lo que su rol puede ver.",
   loadingHistory: "cargando historial",
@@ -164,6 +167,8 @@ const STRINGS: Record<Locale, typeof ES> = {
     missingKey: "Set up your OpenRouter API key to start.",
     missingModels: "Some seat is missing a model.",
     createFailed: "Could not create the game.",
+    watchDemo: "Watch a demo game",
+    demoHint: "Recorded with real models · no API key or cost",
     heroText:
       "Four seats, four models. The server referee keeps the state and only shows each model what its role is allowed to see.",
     loadingHistory: "loading history",
@@ -842,6 +847,18 @@ export function SetupScreen({
                   ? t.loadingCatalog
                   : t.toolModels(toolModels.length)}
               </span>
+            </div>
+            {/* A recorded real game: the quickest way to see the project, no key needed. */}
+            <div className="mt-4 flex flex-wrap items-center gap-2.5">
+              <button
+                type="button"
+                onClick={() => onOpenGame(randomDemoId(locale), "replay")}
+                className="btn-glow inline-flex h-9 items-center gap-1.5 rounded-xl bg-accent px-3.5 text-[13px] font-semibold text-accent-ink"
+              >
+                <Play size={14} />
+                {t.watchDemo}
+              </button>
+              <span className="text-[11.5px] text-faint">{t.demoHint}</span>
             </div>
           </div>
 

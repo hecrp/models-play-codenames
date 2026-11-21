@@ -3,6 +3,7 @@ import type {
   BoardCard,
   EngineEvent,
   GameState,
+  Seat,
   StoredGameEvent,
 } from "./types";
 
@@ -134,4 +135,49 @@ export function replayEvents(
   }
 
   return state;
+}
+
+/**
+ * How long a replay lingers after showing `event`, so watching one feels like
+ * the live game: a pause while the next model "thinks", time to read table
+ * talk (as the live orchestrator gives), and quick steps for bookkeeping.
+ * `next` is the event about to be shown, used to pace the thinking pause.
+ */
+export function replayDelay(
+  event: StoredGameEvent,
+  next: StoredGameEvent | undefined,
+  speed = 1,
+): number {
+  let ms: number;
+  switch (event.type) {
+    case "thinking":
+      // The real latency of the coming move, clamped to keep the pace lively.
+      ms =
+        event.data.state === "start"
+          ? Math.min(2600, Math.max(900, next?.meta?.latencyMs ?? 1400))
+          : 120;
+      break;
+    case "clue_given":
+    case "guess_made":
+    case "turn_ended": {
+      const say = "say" in event.data ? event.data.say : undefined;
+      ms = say ? 700 + Math.min(1800, 400 + say.length * 12) : 650;
+      break;
+    }
+    case "turn_started":
+      ms = 500;
+      break;
+    case "agent_error":
+      ms = 1100;
+      break;
+    default:
+      ms = 300;
+  }
+  return Math.round(ms / speed);
+}
+
+/** The seat still thinking at the end of `events`, if any. */
+export function pendingThinker(events: ReadonlyArray<StoredGameEvent>): Seat | null {
+  const last = events[events.length - 1];
+  return last?.type === "thinking" && last.data.state === "start" ? last.seat : null;
 }

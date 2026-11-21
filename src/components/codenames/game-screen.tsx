@@ -35,7 +35,9 @@ import { GameControls, ClueBanner } from "./game-controls";
 import { GameLog } from "./game-log";
 import { HumanPanel, useHumanActions } from "./human-panel";
 import { LocaleSwitch } from "./locale-switch";
-import { TeamPanel } from "./team-panel";
+import { TeamPanel, type ClueItem } from "./team-panel";
+import type { BoardFocus } from "./board";
+import { pendingThinker } from "@/lib/codenames/replay";
 
 interface GameScreenProps {
   gameId: string;
@@ -114,6 +116,9 @@ const ES = {
   loadingGame: "Cargando partida…",
   loadingReplay: "Cargando replay…",
   backToSetup: "Volver a configurar",
+  demoNotice: (models: string) =>
+    `Partida de demostración: la jugaron de verdad ${models} y está grabada, así que no gasta nada.`,
+  demoCta: "Configura la tuya",
 };
 
 const STRINGS: Record<Locale, typeof ES> = {
@@ -173,6 +178,9 @@ const STRINGS: Record<Locale, typeof ES> = {
     loadingGame: "Loading game…",
     loadingReplay: "Loading replay…",
     backToSetup: "Back to setup",
+    demoNotice: (models: string) =>
+      `Demo game: really played by ${models} and recorded, so it costs nothing.`,
+    demoCta: "Set up your own",
   },
 };
 
@@ -340,7 +348,10 @@ function GameView({
   onThemeChange,
   onStepTurn,
   human,
+  notice,
 }: {
+  /** Extra banner above the board (the demo explains itself here). */
+  notice?: React.ReactNode;
   theme: Theme;
   onThemeChange: (theme: Theme) => void;
   onStepTurn?: () => void;
@@ -378,6 +389,27 @@ function GameView({
   const t = useStrings(STRINGS);
   const [dismissedEnd, setDismissedEnd] = useState(false);
   const [logOpen, setLogOpen] = useState(false);
+  // Intent vs outcome: only once the game is over or in a replay, so a live
+  // spectator is not told what the spymaster is aiming at.
+  const showIntent = mode === "replay" || finished;
+  const [focus, setFocus] = useState<(BoardFocus & { id: string }) | null>(null);
+  const focusClue = (clue: ClueItem | null) =>
+    setFocus(
+      clue && clue.targets
+        ? { id: clue.id, team: clue.seat.startsWith("red") ? "red" : "blue", clue: clue.word, targets: clue.targets }
+        : null,
+    );
+  // Drop the focus when its clue is no longer shown (replay rewound) or intent is hidden.
+  const focusVisible =
+    focus !== null && showIntent && events.some((event) => String(event.id) === focus.id);
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFocus(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);
   const headerRef = useRef<HTMLElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
   useEffect(() => {
@@ -403,6 +435,8 @@ function GameView({
   const humanLive = human && !finished ? human : undefined;
   const effectiveGod = humanLive ? humanLive.seat.endsWith("spymaster") : godMode;
   const awaitingHuman = humanLive !== undefined && thinking === humanLive.seat;
+  // A human operative hears the clue alone, as at a real table.
+  const hideAsides = humanLive !== undefined && humanLive.seat.endsWith("operative");
   const canPick =
     awaitingHuman && humanLive.seat.endsWith("operative") && !humanActions.busy;
   const manual = mode === "live" && paused && !finished;
@@ -558,10 +592,15 @@ function GameView({
       </header>
 
       <div className="flex shrink-0 flex-wrap items-center gap-2 px-2 pt-2 sm:px-4">
+        {notice}
         <ClueBanner
           team={state.turn.team}
           phase={state.turn.phase}
-          clue={state.turn.clue}
+          clue={
+            hideAsides && state.turn.clue
+              ? { word: state.turn.clue.word, number: state.turn.clue.number }
+              : state.turn.clue
+          }
           guessesLeft={state.turn.guessesLeft}
           turn={state.turnsPlayed}
           lastError={lastError}
@@ -622,6 +661,7 @@ function GameView({
             cards={state.board}
             godMode={effectiveGod}
             highlightWord={recentGuess}
+            focus={focusVisible ? focus : null}
             onPick={
               canPick
                 ? (card) => void humanActions.send({ type: "guess", word: card.word })
@@ -636,6 +676,10 @@ function GameView({
           state={state}
           thinking={thinking}
           events={events}
+          showIntent={showIntent}
+          hideAsides={hideAsides}
+          focusedClueId={focusVisible ? focus?.id : null}
+          onFocusClue={focusClue}
           className="order-2 lg:order-none lg:col-start-1 lg:row-start-1"
         />
         <TeamPanel
@@ -644,6 +688,10 @@ function GameView({
           state={state}
           thinking={thinking}
           events={events}
+          showIntent={showIntent}
+          hideAsides={hideAsides}
+          focusedClueId={focusVisible ? focus?.id : null}
+          onFocusClue={focusClue}
           className="order-3 lg:order-none lg:col-start-3 lg:row-start-1"
         />
       </main>
@@ -934,6 +982,32 @@ function LiveGame({
   );
 }
 
+/** The card just played, so the board pulses it as in a live game. */
+function lastGuess(events: StoredGameEvent[]): string | null {
+  const last = events[events.length - 1];
+  return last?.type === "guess_made" ? last.data.word : null;
+}
+
+function DemoNotice({ config, onSetup }: { config: GameConfig; onSetup: () => void }) {
+  const t = useStrings(STRINGS);
+  const models = [...new Set(Object.values(config.seats).map((seat) => seat.modelId.split("/").pop()))];
+  return (
+    <div className="glass flex w-full flex-wrap items-center gap-2 rounded-2xl border border-accent/30 px-3 py-2">
+      <Sparkles size={14} className="shrink-0 text-accent" />
+      <span className="min-w-0 flex-1 text-[12.5px] text-ink-soft">
+        {t.demoNotice(models.join(" · "))}
+      </span>
+      <button
+        type="button"
+        onClick={onSetup}
+        className="btn-glow inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg bg-accent px-3 text-[12.5px] font-semibold text-accent-ink"
+      >
+        {t.demoCta}
+      </button>
+    </div>
+  );
+}
+
 function ReplayGame({
   gameId,
   onExit,
@@ -946,6 +1020,15 @@ function ReplayGame({
   const t = useStrings(STRINGS);
   const replay = useCodenamesReplay(gameId);
   const [godMode, setGodMode] = useState(true);
+  const isDemo = gameId.startsWith("demo-");
+  // Demos start on their own, once, like a game someone is playing.
+  const [autoStarted, setAutoStarted] = useState(false);
+  const loaded = replay.data !== null;
+  useEffect(() => {
+    if (!isDemo || !loaded || autoStarted) return;
+    setAutoStarted(true);
+    replay.play();
+  }, [autoStarted, isDemo, loaded, replay]);
   useEffect(() => {
     setGodMode(loadGodMode());
   }, []);
@@ -987,9 +1070,14 @@ function ReplayGame({
       speed={replay.speed}
       godMode={godMode}
       connection="closed"
-      thinking={null}
-      recentGuess={null}
+      thinking={pendingThinker(replay.visibleEvents)}
+      recentGuess={lastGuess(replay.visibleEvents)}
       metricsEvents={replay.visibleEvents}
+      notice={
+        isDemo ? (
+          <DemoNotice config={replay.data.game.config} onSetup={onExit} />
+        ) : undefined
+      }
       onToggleGod={toggleGod}
       onTogglePlay={replay.toggle}
       onStep={replay.step}

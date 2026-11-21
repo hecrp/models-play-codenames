@@ -5,7 +5,7 @@ import {
   fetchCodenamesReplay,
   type CodenamesReplay,
 } from "@/lib/codenames/client-api";
-import { replayEvents } from "@/lib/codenames/replay";
+import { replayDelay, replayEvents } from "@/lib/codenames/replay";
 import type { GameState, StoredGameEvent } from "@/lib/codenames/types";
 import { loadLocale, type Locale } from "@/lib/i18n";
 
@@ -56,7 +56,8 @@ export function useCodenamesReplay(gameId: string) {
       setPlaying(false);
       return;
     }
-    const delay = Math.round(650 / speed);
+    // The event just shown sets the pause, like the pacing of a live game.
+    const delay = replayDelay(events[cursor - 1], events[cursor], speed);
     const timer = window.setTimeout(() => {
       setCursor((current) => Math.min(current + 1, events.length));
     }, delay);
