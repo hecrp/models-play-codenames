@@ -123,7 +123,11 @@ export function redactEvent(event: StoredGameEvent): StoredGameEvent {
     };
   }
   if (event.type === "clue_given") {
-    return { ...event, meta, data: { ...event.data, reasoning: undefined } };
+    return {
+      ...event,
+      meta,
+      data: { ...event.data, reasoning: undefined, targets: undefined, targetsDropped: undefined },
+    };
   }
   if (event.type === "turn_ended") {
     return { ...event, meta, data: { ...event.data, reasoning: undefined } };

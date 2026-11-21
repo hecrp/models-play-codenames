@@ -15,6 +15,7 @@
 
 # next.js
 /.next/
+/.next-*/
 /out/
 
 # production
@@ -43,3 +44,6 @@ next-env.d.ts
 
 # codenames local data
 /data/
+
+# model study (runner, plans, data and reports) — local for now
+/study/

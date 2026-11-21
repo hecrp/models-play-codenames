@@ -1,7 +1,7 @@
 import { otherTeam, roleOfSeat, teamOfSeat } from "./seats";
 import type { AgentView, CardColor, Language, Seat, Team } from "./types";
 
-export const PROMPT_VERSION = "v6";
+export const PROMPT_VERSION = "v8";
 
 const MAX_HISTORY_LINES = 60;
 
@@ -73,12 +73,12 @@ CHARLA DE MESA (campo say, obligatorio)
 3. El número debe ser exactamente cuántas de tus cartas quieres que adivine con esa pista.
 4. Si vas muy por detrás, puedes arriesgar más; si vas por delante, juega seguro.
 5. Usa una palabra española común que tu agente entienda, nunca una palabra del tablero ni un derivado.
-6. Pista 0 es una jugada experta: avisa de un tema que hay que EVITAR y deja a tu agente intentos sin límite para recuperar cartas de pistas anteriores.`,
+6. Da casi siempre una pista positiva, aunque sea de 1: es lo que acerca cartas. La pista 0 no apunta a ninguna carta tuya; resérvala para casos excepcionales, cuando tu agente ya tenga cartas pendientes de pistas anteriores. Nunca la uses para nombrar el tema del asesino: es fácil que tu agente vaya justo hacia él.`,
   operativeStrategy: `CÓMO JUGAR BIEN COMO AGENTE
 1. Empieza por la carta que más claramente encaja con la pista actual.
 2. Ten en cuenta el número: tras acertar esa cantidad, plántate o usa el intento extra solo si una pista anterior de tu equipo dejó cartas sin encontrar.
 3. Si dudas entre varias cartas y alguna podría ser el asesino o del rival, es mejor plantarse que arriesgar (pero nunca antes del primer intento).
-4. Si la pista es 0, tu jefe te avisa de un tema a EVITAR: busca cartas de pistas anteriores que sigan sin encontrar.
+4. Si la pista es 0, tu jefe dice que NINGUNA de vuestras cartas tiene que ver con esa palabra: no elijas cartas relacionadas con ella (pueden ser del rival o el asesino) y busca cartas de pistas anteriores que sigan sin encontrar.
 5. Elige siempre una palabra exacta de la lista de cartas sin revelar.`,
   team: { red: "rojo", blue: "azul" },
   color: { red: "roja", blue: "azul", neutral: "neutral", assassin: "asesino" },
@@ -96,6 +96,7 @@ ${strategy}
 
 Responde únicamente llamando a la herramienta give_clue. No escribas texto fuera de la herramienta.
 El campo say es obligatorio: una frase breve dirigida a la mesa (máximo 180 caracteres). Es pública y la leen todos los modelos: no menciones tus palabras objetivo ni el asesino.
+El campo targets es obligatorio y privado: lista exactamente las cartas de tu equipo a las que apunta la pista (vacía con pista 0). Nadie más lo ve, tampoco tu agente.
 El campo reasoning es opcional (máximo 300 caracteres) y nunca se muestra a los demás modelos.`,
   spymasterUser: (p) => `${p.score}
 Tus palabras (objetivo): ${p.own}
@@ -163,12 +164,12 @@ TABLE TALK (say field, required)
 3. The number must be exactly how many of your cards you want guessed with that clue.
 4. If you are far behind, you may take more risks; if you are ahead, play safe.
 5. Use a common English word your operative will understand, never a board word or a derived form.
-6. A 0 clue is an expert move: it warns about a topic to AVOID and gives your operative unlimited guesses to recover cards from earlier clues.`,
+6. Almost always give a positive clue, even if it is for 1: that is what gets cards. A 0 clue points to none of your cards; keep it for exceptional cases, when your operative still has pending cards from earlier clues. Never use it to name the assassin's topic: your operative may well head straight for it.`,
   operativeStrategy: `HOW TO PLAY WELL AS OPERATIVE
 1. Start with the card that most clearly fits the current clue.
 2. Mind the number: after getting that many right, stop or use the extra guess only if an earlier clue of your team left cards unfound.
 3. If you hesitate between cards and one could be the assassin or a rival card, stopping is better than risking it (but never before the first guess).
-4. If the clue is 0, your spymaster warns you about a topic to AVOID: look for cards from earlier clues still unfound.
+4. If the clue is 0, your spymaster says that NONE of your cards relate to that word: do not pick cards related to it (they may be the rival's or the assassin) and look for cards from earlier clues still unfound.
 5. Always pick an exact word from the list of unrevealed cards.`,
   team: { red: "red", blue: "blue" },
   color: { red: "red", blue: "blue", neutral: "neutral", assassin: "assassin" },
@@ -186,6 +187,7 @@ ${strategy}
 
 Answer only by calling the give_clue tool. Do not write text outside the tool.
 The say field is required: a short line for the table (max 180 characters). It is public and every model reads it: do not mention your target words or the assassin.
+The targets field is required and private: list exactly the cards of your team the clue points to (empty with a 0 clue). Nobody else sees it, not even your operative.
 The reasoning field is optional (max 300 characters) and is never shown to the other models.`,
   spymasterUser: (p) => `${p.score}
 Your words (targets): ${p.own}

@@ -425,6 +425,7 @@ export class GameOrchestrator {
             message,
             attemptsLeft: MAX_ATTEMPTS - attempt,
             phase: this.state.turn.phase,
+            ...(response.error?.transient ? { transient: true } : {}),
           },
         },
         response.meta,

@@ -110,7 +110,15 @@ export interface GameConfig {
 }
 
 export type GameAction =
-  | { type: "give_clue"; word: string; number: number; reasoning?: string; say?: string }
+  | {
+      type: "give_clue";
+      word: string;
+      number: number;
+      /** Private: the spymaster's own cards this clue is meant for. */
+      targets?: string[];
+      reasoning?: string;
+      say?: string;
+    }
   | { type: "guess"; word: string; reasoning?: string; say?: string }
   | { type: "stop"; reasoning?: string; say?: string };
 
@@ -124,6 +132,13 @@ export interface EventMeta {
   costUsd?: number;
   costEstimated?: boolean;
   latencyMs?: number;
+  /** Upstream provider OpenRouter routed the call to. */
+  provider?: string;
+  reasoningTokens?: number;
+  cachedTokens?: number;
+  finishReason?: string;
+  /** Upstream retries (429/5xx/network) before this response. */
+  retries?: number;
 }
 
 type EventBase = {
@@ -153,7 +168,18 @@ export type EngineEvent = EventBase &
     | {
         type: "clue_given";
         seat: Seat;
-        data: { word: string; number: number; reasoning?: string; say?: string };
+        data: {
+          word: string;
+          number: number;
+          /** Private (redacted like reasoning): board words the clue aims at. */
+          targets?: string[];
+          /** Targets the model named that are not unrevealed board words. */
+          targetsDropped?: number;
+          reasoning?: string;
+          say?: string;
+          /** Hidden board words the referee masked out of `say`. */
+          sayMasked?: number;
+        };
       }
     | {
         type: "guess_made";
@@ -165,6 +191,7 @@ export type EngineEvent = EventBase &
           guessesLeft: number;
           guessesMade: number;
           say?: string;
+          sayMasked?: number;
         };
       }
     | {
@@ -177,6 +204,7 @@ export type EngineEvent = EventBase &
           remaining: Record<Team, number>;
           reasoning?: string;
           say?: string;
+          sayMasked?: number;
         };
       }
     | {
@@ -187,6 +215,8 @@ export type EngineEvent = EventBase &
           message: string;
           attemptsLeft: number;
           phase: Phase;
+          /** Infrastructure failure (timeout, rate limit, outage), not the model's move. */
+          transient?: boolean;
         };
       }
     | {

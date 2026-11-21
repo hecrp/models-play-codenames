@@ -4,8 +4,25 @@
     {
       "name": "dev",
       "runtimeExecutable": "node",
-      "runtimeArgs": ["node_modules/next/dist/bin/next", "dev"],
+      "runtimeArgs": [
+        "node_modules/next/dist/bin/next",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "study-viewer",
+      "runtimeExecutable": "/usr/bin/env",
+      "runtimeArgs": [
+        "CODENAMES_DATA_DIR=study/data/smoke",
+        "NEXT_DIST_DIR=.next-study",
+        "node",
+        "node_modules/next/dist/bin/next",
+        "dev",
+        "--port",
+        "3100"
+      ],
+      "port": 3100
     }
   ]
 }

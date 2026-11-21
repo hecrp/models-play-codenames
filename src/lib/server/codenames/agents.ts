@@ -18,6 +18,9 @@ export interface OpenRouterAgentOptions {
   models: readonly ModelInfo[];
   timeoutMs?: number;
   maxTokens?: number;
+  reasoningEffort?: "low" | "medium" | "high";
+  /** OpenRouter provider routing (e.g. pin a provider for reproducible studies). */
+  provider?: Record<string, unknown>;
 }
 
 function metaFromCompletion(
@@ -42,6 +45,11 @@ function metaFromCompletion(
     costUsd: usage?.cost ?? estimated,
     costEstimated: usage?.cost === undefined && estimated !== undefined,
     latencyMs: completion.latencyMs,
+    ...(completion.provider ? { provider: completion.provider } : {}),
+    ...(usage?.reasoningTokens ? { reasoningTokens: usage.reasoningTokens } : {}),
+    ...(usage?.cachedTokens ? { cachedTokens: usage.cachedTokens } : {}),
+    ...(completion.finishReason ? { finishReason: completion.finishReason } : {}),
+    ...(completion.retries ? { retries: completion.retries } : {}),
   };
 }
 
@@ -90,7 +98,8 @@ export function createOpenRouterAgentAdapter(
           maxTokens: options.maxTokens ?? 2000,
           timeoutMs: options.timeoutMs ?? 60_000,
           includeReasoning: model?.supportsReasoning ?? false,
-          reasoningEffort: "low",
+          reasoningEffort: options.reasoningEffort ?? "low",
+          provider: options.provider,
           signal: request.signal,
           lang,
         });

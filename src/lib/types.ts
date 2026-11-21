@@ -3,6 +3,8 @@ export interface Usage {
   completionTokens: number;
   totalTokens: number;
   cost?: number;
+  reasoningTokens?: number;
+  cachedTokens?: number;
 }
 
 export interface ModelInfo {

@@ -62,6 +62,25 @@ function asReasoning(value: unknown): string | undefined {
     : undefined;
 }
 
+/**
+ * Private clue targets. Accepts an array or a comma-separated string, and the
+ * Spanish field name some models translate the schema into.
+ */
+function asTargets(args: Record<string, unknown>): string[] | undefined {
+  const raw = args.targets ?? args.objetivos ?? args.target_words;
+  const values = Array.isArray(raw)
+    ? raw
+    : typeof raw === "string"
+      ? raw.split(/[,;]/)
+      : null;
+  if (!values) return undefined;
+  return values
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 9);
+}
+
 /** Table talk: shown to everyone, so it is clamped and whitespace-collapsed. */
 export function asSay(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -74,11 +93,13 @@ export function asSay(value: unknown): string | undefined {
  * The engine still performs the semantic validation (board words, ranges...).
  */
 export function parseToolCall(
-  name: string,
+  rawName: string,
   rawArguments: unknown,
   lang: Language = "es",
 ): ToolParseResult {
   const text = gameText(lang);
+  // Some models (gpt-oss, Harmony format) prefix the namespace: functions.give_clue.
+  const name = rawName.trim().replace(/^functions[.:]/, "");
   let argumentsValue = rawArguments;
   if (typeof rawArguments === "string") {
     try {
@@ -124,6 +145,7 @@ export function parseToolCall(
         type: "give_clue",
         word,
         number,
+        ...(asTargets(args) ? { targets: asTargets(args) } : {}),
         ...(asReasoning(args.reasoning)
           ? { reasoning: asReasoning(args.reasoning) }
           : {}),

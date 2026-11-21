@@ -135,11 +135,18 @@ export function mapUsage(raw: unknown): Usage | undefined {
 
   if (!prompt && !completion && !total) return undefined;
 
+  const completionDetails = usage.completion_tokens_details as Record<string, unknown> | undefined;
+  const promptDetails = usage.prompt_tokens_details as Record<string, unknown> | undefined;
+  const reasoningTokens = Number(completionDetails?.reasoning_tokens);
+  const cachedTokens = Number(promptDetails?.cached_tokens);
+
   return {
     promptTokens: prompt,
     completionTokens: completion,
     totalTokens: total,
     cost: Number.isFinite(cost) ? cost : undefined,
+    ...(Number.isFinite(reasoningTokens) && reasoningTokens > 0 ? { reasoningTokens } : {}),
+    ...(Number.isFinite(cachedTokens) && cachedTokens > 0 ? { cachedTokens } : {}),
   };
 }
 
@@ -167,6 +174,10 @@ export interface ToolCompletion {
   latencyMs: number;
   finishReason?: string;
   toolChoiceFallback: boolean;
+  /** Upstream provider that served the call (DeepInfra, Groq…). */
+  provider?: string;
+  /** Retries after 429/5xx/network failures before the final response. */
+  retries: number;
 }
 
 export interface ToolCompletionOptions {
@@ -181,6 +192,8 @@ export interface ToolCompletionOptions {
   timeoutMs?: number;
   includeReasoning?: boolean;
   reasoningEffort?: "low" | "medium" | "high";
+  /** OpenRouter provider routing preferences, sent as-is (order, allow_fallbacks…). */
+  provider?: Record<string, unknown>;
   signal?: AbortSignal;
   maxRetries?: number;
   /** Language for error messages that end up in the game log. */
@@ -190,6 +203,7 @@ export interface ToolCompletionOptions {
 interface RequestOutcome {
   data: Record<string, unknown>;
   latencyMs: number;
+  retries?: number;
 }
 
 async function requestOnce(
@@ -215,6 +229,7 @@ async function requestOnce(
     usage: { include: true },
   };
   if (options.temperature !== undefined) payload.temperature = options.temperature;
+  if (options.provider) payload.provider = options.provider;
   if (options.includeReasoning) {
     payload.reasoning = {
       effort: options.reasoningEffort ?? "low",
@@ -316,7 +331,8 @@ async function requestWithBackoff(
   const maxRetries = options.maxRetries ?? 3;
   for (let attempt = 0; ; attempt += 1) {
     try {
-      return await requestOnce(options, toolChoice);
+      const outcome = await requestOnce(options, toolChoice);
+      return { ...outcome, retries: attempt };
     } catch (error) {
       if (
         !(error instanceof OpenRouterError) ||
@@ -370,6 +386,7 @@ export async function completeWithTools(
   }
 
   const { data, latencyMs } = outcome;
+  const retries = outcome.retries ?? 0;
   const choices = Array.isArray(data.choices) ? data.choices : [];
   const choice =
     choices[0] && typeof choices[0] === "object"
@@ -410,5 +427,7 @@ export async function completeWithTools(
         ? choice.finish_reason
         : undefined,
     toolChoiceFallback,
+    ...(typeof data.provider === "string" && data.provider ? { provider: data.provider } : {}),
+    retries,
   };
 }

@@ -68,31 +68,67 @@ function fail(code: ApplyError["code"], message: string): ApplyError {
 /**
  * Table talk is public: strip any hidden board word (except the one the seat is
  * allowed to name) so a model cannot leak private information by chatting.
+ * `masked` counts the words removed, which the study uses as leak attempts.
  */
-function cleanSay(
+export function cleanSay(
   raw: string | undefined,
   state: GameState,
   allowedWord?: string,
-): string | undefined {
-  if (!raw) return undefined;
+): { say?: string; masked: number } {
+  if (!raw) return { masked: 0 };
   const clean = raw.replace(/\s+/g, " ").trim().slice(0, 180);
-  if (!clean) return undefined;
+  if (!clean) return { masked: 0 };
   const allowed = allowedWord ? normalizeWord(allowedWord) : null;
   const hidden = new Set(
     state.board
       .filter((card) => !card.revealed && card.normalized !== allowed)
       .map((card) => card.normalized),
   );
+  let masked = 0;
   const filtered = clean
     .split(" ")
     .map((token) => {
       const bare = normalizeWord(token.replace(/[^\p{L}\p{N}]/gu, ""));
-      return bare && hidden.has(bare) ? "…" : token;
+      if (bare && hidden.has(bare)) {
+        masked += 1;
+        return "…";
+      }
+      return token;
     })
     .join(" ")
     .replace(/(?:\s*…\s*)+/g, " … ")
     .trim();
-  return filtered || undefined;
+  return { say: filtered || undefined, masked };
+}
+
+/** Spread helper for the optional `say` / `sayMasked` event fields. */
+function sayFields(talk: { say?: string; masked: number }) {
+  return {
+    ...(talk.say ? { say: talk.say } : {}),
+    ...(talk.masked > 0 ? { sayMasked: talk.masked } : {}),
+  };
+}
+
+/**
+ * Map the spymaster's declared targets to unrevealed board words. Unknown
+ * words are dropped (and counted); duplicates are removed.
+ */
+function resolveTargets(
+  state: GameState,
+  raw: string[] | undefined,
+): { targets?: string[]; dropped: number } {
+  if (!raw) return { dropped: 0 };
+  const targets: string[] = [];
+  let dropped = 0;
+  for (const value of raw) {
+    const normalized = normalizeWord(String(value));
+    const card = state.board.find(
+      (candidate) => !candidate.revealed && candidate.normalized === normalized,
+    );
+    if (!card) dropped += 1;
+    else if (!targets.includes(card.word)) targets.push(card.word);
+  }
+  return { targets, dropped };
 }
 
 function cloneState(state: GameState): GameState {
@@ -317,7 +353,7 @@ function endTurn(
   events: EngineEvent[],
   seat?: Seat,
   reasoning?: string,
-  say?: string,
+  talk: { say?: string; masked: number } = { masked: 0 },
 ): void {
   const currentTeam = state.turn.team;
   const next = otherTeam(currentTeam);
@@ -333,7 +369,7 @@ function endTurn(
       nextTeam,
       remaining: remainingCards(state),
       ...(reasoning ? { reasoning } : {}),
-      ...(say ? { say } : {}),
+      ...sayFields(talk),
     },
   });
 
@@ -417,7 +453,9 @@ export function apply(
     const next = cloneState(state);
     const word = action.word.trim();
     const reasoning = action.reasoning?.trim().slice(0, 300);
-    const say = cleanSay(action.say, state, action.word);
+    const talk = cleanSay(action.say, state, action.word);
+    const say = talk.say;
+    const { targets, dropped } = resolveTargets(state, action.targets);
     next.turn = {
       ...next.turn,
       phase: "guess",
@@ -441,8 +479,10 @@ export function apply(
           data: {
             word,
             number: action.number,
+            ...(targets ? { targets } : {}),
+            ...(dropped > 0 ? { targetsDropped: dropped } : {}),
             ...(reasoning ? { reasoning } : {}),
-            ...(say ? { say } : {}),
+            ...sayFields(talk),
           },
         },
       ],
@@ -492,9 +532,7 @@ export function apply(
           result,
           guessesLeft,
           guessesMade,
-          ...(cleanSay(action.say, state, action.word)
-            ? { say: cleanSay(action.say, state, action.word) }
-            : {}),
+          ...sayFields(cleanSay(action.say, state, action.word)),
         },
       },
     ];

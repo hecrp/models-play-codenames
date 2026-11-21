@@ -24,6 +24,7 @@ const ES = {
   team: { red: "rojo", blue: "azul" } as Record<Team, string>,
   reasoningAndMetrics: "Razonamiento y métricas",
   metrics: "Métricas",
+  targets: "Objetivos",
   results: {
     own: "✓ propia",
     opponent: "✗ rival",
@@ -76,6 +77,7 @@ const STRINGS: Record<Locale, typeof ES> = {
     team: { red: "red", blue: "blue" },
     reasoningAndMetrics: "Reasoning and metrics",
     metrics: "Metrics",
+    targets: "Targets",
     results: {
       own: "✓ own",
       opponent: "✗ opponent",
@@ -167,7 +169,15 @@ export function SpeechBubble({
   );
 }
 
-function DetailsToggle({ meta, reasoning }: { meta?: EventMeta; reasoning?: string }) {
+function DetailsToggle({
+  meta,
+  reasoning,
+  targets,
+}: {
+  meta?: EventMeta;
+  reasoning?: string;
+  targets?: string[];
+}) {
   const t = useStrings(STRINGS);
   const [open, setOpen] = useState(false);
   const text = reasoning ?? meta?.reasoning;
@@ -196,7 +206,14 @@ function DetailsToggle({ meta, reasoning }: { meta?: EventMeta; reasoning?: stri
             {cost && <span>{cost}</span>}
             {meta?.latencyMs !== undefined && <span>{meta.latencyMs} ms</span>}
             {meta?.promptVersion && <span>prompt {meta.promptVersion}</span>}
+            {meta?.provider && <span>{meta.provider}</span>}
           </div>
+          {targets && targets.length > 0 && (
+            <p className="text-[11.5px] text-muted">
+              <span className="font-semibold text-faint">{t.targets}:</span>{" "}
+              <span className="uppercase tracking-wide">{targets.join(" · ")}</span>
+            </p>
+          )}
           {text && (
             <p className="max-h-56 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-relaxed text-muted">
               {text}
@@ -214,6 +231,7 @@ function ActorRow({
   action,
   say,
   reasoning,
+  targets,
   meta,
 }: {
   seat: Seat;
@@ -221,6 +239,7 @@ function ActorRow({
   action: React.ReactNode;
   say?: string;
   reasoning?: string;
+  targets?: string[];
   meta?: EventMeta;
 }) {
   const seatConfig = config.seats[seat];
@@ -239,7 +258,7 @@ function ActorRow({
           {action}
         </div>
         {say && <SpeechBubble text={say} team={team} className="mt-1" />}
-        <DetailsToggle meta={meta} reasoning={reasoning} />
+        <DetailsToggle meta={meta} reasoning={reasoning} targets={targets} />
       </div>
     </article>
   );
@@ -483,6 +502,7 @@ function EventRow({
       action={text}
       say={say}
       reasoning={event.type === "clue_given" ? event.data.reasoning : undefined}
+      targets={event.type === "clue_given" ? event.data.targets : undefined}
       meta={event.meta}
     />
   );

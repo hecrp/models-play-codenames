@@ -274,6 +274,31 @@ describe("GameOrchestrator", () => {
     expect(game.events.at(-1)?.type).toBe("game_over");
   });
 
+  it("marks infrastructure failures as transient in agent_error", async () => {
+    let failed = false;
+    const adapter = adapterFrom((request) => {
+      if (!failed) {
+        failed = true;
+        return response(null, {
+          error: {
+            code: "timeout",
+            message: "Timeout.",
+            fatal: false,
+            transient: true,
+          },
+        });
+      }
+      return response(playAction(request));
+    });
+    const game = createOrchestrator(adapter);
+    const running = game.run();
+    await waitUntil(() => game.events.some((event) => event.type === "clue_given"));
+    game.abort();
+    await running;
+    const error = game.events.find((event) => event.type === "agent_error");
+    expect(error?.type === "agent_error" && error.data.transient).toBe(true);
+  });
+
   it("aborts while a model call is in flight", async () => {
     const releases: Array<() => void> = [];
     const adapter = adapterFrom(async (request) => {

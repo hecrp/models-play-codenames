@@ -21,6 +21,8 @@ const DESCRIPTIONS = {
       "Una sola palabra en español, sin espacios ni guiones, relacionada por significado con tus cartas. No puede ser una carta sin revelar, ni una forma suya (plural, derivado) ni una palabra compuesta que la incluya.",
     clueNumber:
       "Número de cartas propias relacionadas con la pista. 0 significa 'ninguna de las nuestras' y da intentos sin límite.",
+    targets:
+      "OBLIGATORIO y privado (nunca se muestra a los demás modelos). Las cartas de tu equipo, sin revelar, a las que apunta esta pista, copiadas tal cual. Con pista 0, lista vacía.",
     guess:
       "Revela una carta del tablero que todavía no esté revelada. Solo una por llamada, con una frase breve de charla.",
     guessWord: "Palabra exacta de una carta sin revelar.",
@@ -36,6 +38,8 @@ const DESCRIPTIONS = {
       "One single English word, without spaces or hyphens, related by meaning to your cards. It cannot be an unrevealed card, a form of one (plural, derived word) or a compound word that includes one.",
     clueNumber:
       "Number of your own cards related to the clue. 0 means 'none of ours' and gives unlimited guesses.",
+    targets:
+      "REQUIRED and private (never shown to the other models). Your team's unrevealed cards this clue points to, copied exactly. With a 0 clue, an empty list.",
     guess:
       "Reveal a card on the board that is not revealed yet. Only one per call, with a short line of table talk.",
     guessWord: "Exact word of an unrevealed card.",
@@ -48,7 +52,7 @@ function buildTools(lang: Language) {
   const reasoning = { type: "string", maxLength: 300, description: d.reasoning };
   const say = { type: "string", maxLength: 180, description: d.say };
 
-  const giveClue: FunctionTool = {
+  const giveClue = (ownWords?: string[]): FunctionTool => ({
     type: "function",
     function: {
       name: "give_clue",
@@ -56,16 +60,25 @@ function buildTools(lang: Language) {
       parameters: {
         type: "object",
         additionalProperties: false,
-        required: ["word", "number"],
+        required: ["word", "number", "targets"],
         properties: {
           word: { type: "string", description: d.clueWord },
           number: { type: "integer", minimum: 0, maximum: 9, description: d.clueNumber },
+          targets: {
+            type: "array",
+            maxItems: 9,
+            items: {
+              type: "string",
+              ...(ownWords && ownWords.length > 0 ? { enum: ownWords } : {}),
+            },
+            description: d.targets,
+          },
           say,
           reasoning,
         },
       },
     },
-  };
+  });
 
   const guess = (words?: string[]): FunctionTool => ({
     type: "function",
@@ -107,11 +120,11 @@ function buildTools(lang: Language) {
 
 const TOOLS = { es: buildTools("es"), en: buildTools("en") };
 
-export const GIVE_CLUE_TOOL = TOOLS.es.giveClue;
+export const GIVE_CLUE_TOOL = TOOLS.es.giveClue();
 
 export function toolsForSeat(seat: Seat, view?: AgentView): FunctionTool[] {
   const tools = TOOLS[view?.lang ?? "es"];
-  if (roleOfSeat(seat) === "spymaster") return [tools.giveClue];
+  if (roleOfSeat(seat) === "spymaster") return [tools.giveClue(view?.ownWords ?? undefined)];
   const hidden = view?.board.filter((card) => !card.revealed).map((card) => card.word);
   if (!view || !hidden || hidden.length === 0) return [tools.guess(), tools.stop];
   // The first guess of a turn is mandatory, so stop is not offered yet.
