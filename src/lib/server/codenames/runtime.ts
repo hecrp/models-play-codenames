@@ -1,4 +1,5 @@
-import { PROMPT_VERSION } from "@/lib/codenames/prompts";
+import { promptVersionFor } from "@/lib/codenames/prompts";
+import { MODEL_CALL_TIMEOUT_MS } from "@/lib/codenames/reasoning";
 import { computeMetrics } from "@/lib/codenames/metrics";
 import type {
   GameAction,
@@ -7,6 +8,7 @@ import type {
   StoredGameEvent,
 } from "@/lib/codenames/types";
 import type { ModelInfo } from "@/lib/types";
+import { adapterKeys, seatsWithoutKey, type ProviderKeys } from "@/lib/server/provider-keys";
 import { createOpenRouterAgentAdapter } from "./agents";
 import {
   createMixedAdapter,
@@ -35,7 +37,8 @@ interface RuntimeEntry {
   clientId: string;
   orchestrator: GameOrchestrator;
   subscribers: Set<EventListener>;
-  apiKey: string | null;
+  /** In memory only while the game runs; dropped when it ends. */
+  keys: ProviderKeys | null;
   models: readonly ModelInfo[];
   runPromise: Promise<unknown> | null;
   inbox: HumanInbox;
@@ -71,7 +74,7 @@ function persist(entry: RuntimeEntry): void {
       computeMetrics(entry.orchestrator.events),
       Date.now(),
     );
-    entry.apiKey = null;
+    entry.keys = null;
   }
 }
 
@@ -122,7 +125,7 @@ export interface StartGameInput {
   id: string;
   clientId: string;
   config: GameConfig;
-  apiKey: string;
+  keys: ProviderKeys;
   models: readonly ModelInfo[];
 }
 
@@ -130,9 +133,10 @@ export async function startGame(input: StartGameInput): Promise<GameRecord> {
   const inbox = new HumanInbox();
   const adapter = createMixedAdapter(
     createOpenRouterAgentAdapter({
-      apiKey: input.apiKey,
+      ...adapterKeys(input.keys, input.config),
       models: input.models,
-      timeoutMs: 60_000,
+      timeoutMs: MODEL_CALL_TIMEOUT_MS,
+      promptVariant: input.config.promptVariant,
     }),
     inbox,
     input.config.seats,
@@ -170,7 +174,7 @@ export async function startGame(input: StartGameInput): Promise<GameRecord> {
       seed: input.config.seed,
       lang: input.config.lang,
       config: input.config,
-      promptVersion: input.config.promptVersion || PROMPT_VERSION,
+      promptVersion: input.config.promptVersion || promptVersionFor(input.config.promptVariant),
       state: orchestrator.state,
       now: Date.now(),
     });
@@ -179,7 +183,7 @@ export async function startGame(input: StartGameInput): Promise<GameRecord> {
       gameId: input.id,
       clientId: input.clientId,
       orchestrator,
-      apiKey: input.apiKey,
+      keys: input.keys,
       models: input.models,
       inbox,
       config: input.config,
@@ -224,7 +228,7 @@ export async function controlGame(
   action: "pause" | "resume" | "step" | "step_turn" | "abort" | "speed",
   options: {
     speed?: number;
-    apiKey?: string | null;
+    keys?: ProviderKeys | null;
     models?: readonly ModelInfo[];
     clientId?: string;
   } = {},
@@ -239,7 +243,7 @@ export async function controlGame(
   if (!entry && action === "resume") {
     entry = await recoverRuntime(
       gameId,
-      options.apiKey ?? null,
+      options.keys ?? null,
       options.models,
       options.clientId ?? "",
     );
@@ -288,7 +292,7 @@ export async function controlGame(
 
 export async function recoverRuntime(
   gameId: string,
-  apiKey: string | null,
+  keys: ProviderKeys | null,
   models: readonly ModelInfo[] | undefined,
   clientId = "",
 ): Promise<RuntimeEntry | undefined> {
@@ -298,17 +302,17 @@ export async function recoverRuntime(
   const game = getGame(gameId);
   if (!game) return undefined;
   if (game.status === "finished" || game.status === "aborted") return undefined;
-  const resolvedKey = apiKey?.trim();
-  if (!resolvedKey) return undefined;
+  if (!keys || seatsWithoutKey(game.config, keys).length > 0) return undefined;
   if (!models) return undefined;
 
   const events = getEvents(gameId, 0);
   const inbox = new HumanInbox();
   const adapter = createMixedAdapter(
     createOpenRouterAgentAdapter({
-      apiKey: resolvedKey,
+      ...adapterKeys(keys, game.config),
       models,
-      timeoutMs: 60_000,
+      timeoutMs: MODEL_CALL_TIMEOUT_MS,
+      promptVariant: game.config.promptVariant,
     }),
     inbox,
     game.config.seats,
@@ -344,7 +348,7 @@ export async function recoverRuntime(
     gameId,
     clientId,
     orchestrator,
-    apiKey: resolvedKey,
+    keys,
     models,
     inbox,
     config: game.config,
@@ -397,7 +401,7 @@ export async function resolveHumanGuess(
   const resolution = await resolveGuess(
     text,
     hidden,
-    apiKey ?? check.entry.apiKey,
+    apiKey ?? check.entry.keys?.openrouter ?? null,
     check.entry.orchestrator.state.lang,
   );
   return { ok: true, resolution };

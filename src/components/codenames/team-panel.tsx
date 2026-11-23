@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Brain, Crosshair, Crown, Eye, EyeOff, Hand, RotateCcw, WifiOff, X } from "lucide-react";
 import type {
   GameState,
@@ -62,8 +63,8 @@ const ES = {
   connection: "Problema de conexión, reintentando",
   turnN: (turn: number) => `Turno ${turn}`,
   clue: "Pista",
-  aside: "Aparte para el público",
-  asideHint: "En Codenames el jefe solo dice la pista: ningún jugador lee este comentario.",
+  asideHint:
+    "Ningún modelo ve este comentario, tampoco su agente: en Codenames el jefe solo dice la pista. Es un aparte para quien mira la partida.",
   unlimited: "sin límite",
   stops: "Me planto",
   spymaster: "Jefe",
@@ -119,8 +120,8 @@ const STRINGS: Record<Locale, typeof ES> = {
     connection: "Connection problem, retrying",
     turnN: (turn) => `Turn ${turn}`,
     clue: "Clue",
-    aside: "Aside to the audience",
-    asideHint: "In Codenames the spymaster only says the clue: no player reads this line.",
+    asideHint:
+      "No model sees this line, not even their operative: in Codenames the spymaster only says the clue. It is an aside for whoever watches the game.",
     unlimited: "unlimited",
     stops: "I'll stop here",
     spymaster: "Spymaster",
@@ -171,6 +172,60 @@ function sender(item: ThreadItem): Seat | null {
   return item.kind === "clue" || item.kind === "guess" || item.kind === "stop"
     ? item.seat
     : null;
+}
+
+/**
+ * Crossed-out eye before a spymaster's line: hovering or focusing it explains
+ * that no model reads it. The hint is portaled and fixed so the chat's
+ * scrolling and the bubble's animation cannot clip or shift it.
+ */
+function HiddenFromModels({ hint }: { hint: string }) {
+  const anchorRef = useRef<HTMLSpanElement>(null);
+  const [position, setPosition] = useState<{ left: number; top: number; above: boolean } | null>(null);
+
+  const show = () => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const width = 240;
+    const left = Math.min(Math.max(8, rect.left - 8), window.innerWidth - width - 8);
+    // Below the icon unless that runs off the bottom of the window.
+    const above = rect.bottom + 96 > window.innerHeight;
+    setPosition({ left, top: above ? rect.top - 6 : rect.bottom + 6, above });
+  };
+  const hide = () => setPosition(null);
+
+  return (
+    <>
+      <span
+        ref={anchorRef}
+        tabIndex={0}
+        role="img"
+        aria-label={hint}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
+        className="mt-[3px] inline-flex shrink-0 cursor-help rounded text-faint outline-none transition-colors hover:text-muted focus-visible:text-ink"
+      >
+        <EyeOff size={11} aria-hidden="true" />
+      </span>
+      {position &&
+        createPortal(
+          <span
+            role="tooltip"
+            className="animate-fade-in pointer-events-none fixed z-[70] w-60 rounded-lg border border-line bg-elevated px-2.5 py-1.5 text-[11.5px] not-italic leading-snug text-ink-soft shadow-lg"
+            style={{
+              left: position.left,
+              top: position.top,
+              transform: position.above ? "translateY(-100%)" : undefined,
+            }}
+          >
+            {hint}
+          </span>,
+          document.body,
+        )}
+    </>
+  );
 }
 
 function Bubble({
@@ -457,17 +512,9 @@ function Message({
           </span>
         )}
         <Bubble side={side} team={team} showTail={lastOfGroup}>
-          {say && isSpymaster && (
-            <span
-              className="mb-0.5 flex items-center gap-1 text-[9.5px] font-semibold uppercase tracking-[0.12em] text-faint"
-              title={t.asideHint}
-            >
-              <EyeOff size={9} className="shrink-0" />
-              {t.aside}
-            </span>
-          )}
           {say && (
-            <div className={cn(isSpymaster && "italic text-ink-soft")}>
+            <div className={cn(isSpymaster && "flex items-start gap-1.5 italic text-ink-soft")}>
+              {isSpymaster && <HiddenFromModels hint={t.asideHint} />}
               <StreamingText text={say} animate={animate} onDone={() => setStreamed(true)} />
             </div>
           )}
@@ -944,13 +991,23 @@ export function TeamPanel({
               );
             }
             if (item.kind === "rejected") {
+              // The referee's reason can name a hidden card (a clue too close
+              // to one of the spymaster's own): a human operative sees only
+              // that a move was rejected, like the models.
+              const hideReason = hideAsides && item.seat === spymaster;
               return (
                 <SystemLine
                   key={item.id}
                   tone="muted"
                   icon={item.transient ? <WifiOff size={10} /> : <RotateCcw size={10} />}
-                  text={item.transient ? t.connection : `${t.rejected}: ${item.message}`}
-                  title={item.message}
+                  text={
+                    item.transient
+                      ? t.connection
+                      : hideReason
+                        ? t.rejected
+                        : `${t.rejected}: ${item.message}`
+                  }
+                  title={hideReason ? undefined : item.message}
                 />
               );
             }

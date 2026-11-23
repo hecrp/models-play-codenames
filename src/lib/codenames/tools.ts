@@ -159,8 +159,15 @@ export type ToolChoice = "required" | "auto" | {
   function: { name: string };
 };
 
-export function toolChoiceForSeat(seat: Seat): ToolChoice {
-  return roleOfSeat(seat) === "spymaster"
-    ? { type: "function", function: { name: "give_clue" } }
-    : "required";
+/**
+ * "auto" for every seat and every model (prompt v13). Forcing the tool (by name
+ * for the spymaster, "required" for the operative) made some models answer with
+ * the call straight away and skip their reasoning (Claude Haiku 5.5 used 0
+ * reasoning tokens in 288 calls), and some endpoints reject it, so each model
+ * got a different request. The prompts demand exactly one tool call; a move
+ * written as text is rescued by the agent layer, otherwise it is a no_tool_call
+ * error the seat gets back privately.
+ */
+export function toolChoiceForSeat(_seat: Seat): ToolChoice {
+  return "auto";
 }

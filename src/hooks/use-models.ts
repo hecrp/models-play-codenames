@@ -28,6 +28,12 @@ export function useModels() {
   const [loading, setLoading] = useState(true);
   const [source, setSource] = useState<"openrouter" | "fallback" | null>(null);
   const [hasServerKey, setHasServerKey] = useState(false);
+  const [serverKeys, setServerKeys] = useState<ModelsResponse["serverKeys"]>({
+    openrouter: false,
+    openai: false,
+    anthropic: false,
+    google: false,
+  });
   const [warning, setWarning] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -53,6 +59,7 @@ export function useModels() {
       setModels(payload.models);
       setSource(payload.source);
       setHasServerKey(payload.hasServerKey);
+      if (payload.serverKeys) setServerKeys(payload.serverKeys);
       setWarning(payload.warning ?? null);
     } catch (caught) {
       if (isAbortError(caught) || controller.signal.aborted) return;
@@ -76,6 +83,7 @@ export function useModels() {
     loading,
     source,
     hasServerKey,
+    serverKeys,
     warning,
     error,
     refresh: load,

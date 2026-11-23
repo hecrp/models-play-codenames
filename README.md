@@ -23,6 +23,8 @@ Open http://localhost:3000 (the old `/codenames` route redirects there).
 
 You can also paste the key in **Settings → OpenRouter API key**: it is stored in `localStorage` and sent only to your own server in the `x-openrouter-key` header.
 
+**Direct providers.** If you have your own OpenAI, Anthropic or Google Gemini key, models from that provider (`openai/…`, `anthropic/…`, `google/…`) can skip OpenRouter and be called through the provider's own API. Set the key in `.env.local` (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`) or in **Settings → Direct providers**. For each provider you choose **Own API** (the default when there is a key) or **OpenRouter**. A model without a usable key goes through OpenRouter, so you only need an OpenRouter key if some seat ends up there. Each seat on the setup screen shows which route it will take, and every move records it (`meta.via`). The model catalog is still OpenRouter's, so the same ids work both ways; costs of direct calls are estimated from the catalog prices.
+
 ## Features
 
 - **Four seats**: red and blue spymaster and operative, each with its own model, temperature, reasoning effort and avatar. Presets: same model, red vs blue, spymasters vs operatives and crossed (each model plays the opposite role on the other team), plus ready-made matchups and example models, all with an estimated cost per game. The examples are popular, cheap models on OpenRouter that keep a typical game at around $0.002–$0.02.
@@ -56,6 +58,7 @@ Optional headers: `x-openrouter-key` (key from Settings) and `x-locale` (`es`/`e
 Environment variables:
 
 - `OPENROUTER_API_KEY` (recommended)
+- `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY` (optional: call those providers' models directly)
 - `OPENROUTER_SITE_URL` (default `http://localhost:3000`)
 - `OPENROUTER_SITE_NAME` (default `Models play Codenames`)
 - `CODENAMES_MAX_ACTIVE` (default `2`)
@@ -73,6 +76,11 @@ pnpm codenames:play --model=openai/gpt-oss-20b --seed=42 --max-cost=0.05
 
 # Reasoning effort: --reasoning for every seat, overridden per team or role
 pnpm codenames:play --model=deepseek/deepseek-v4.1-flash-1017 --reasoning=low --spymaster-reasoning=high
+
+# Direct providers: with OPENAI_API_KEY / ANTHROPIC_API_KEY / GEMINI_API_KEY set, their
+# models skip OpenRouter. --openai, --anthropic and --google take direct or openrouter;
+# --via=openrouter sends everything through OpenRouter.
+pnpm codenames:play --red=anthropic/claude-haiku-5.5 --blue=openai/gpt-6-luna --anthropic=direct
 ```
 
 ## Tests

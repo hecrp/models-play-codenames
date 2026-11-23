@@ -4,7 +4,7 @@ import type { Language } from "./types";
 const ES = {
   badBody: "No se pudo leer el cuerpo de la petición.",
   invalidBody: "El cuerpo de la petición no es válido.",
-  missingApiKey: "No hay ninguna API key de OpenRouter configurada. Añádela en Ajustes.",
+  missingApiKey: "Falta una API key para algún modelo: la de OpenRouter o la de su proveedor (OpenAI, Anthropic, Gemini). Añádela en Ajustes.",
   tooManyGames: (max: number) => `Ya tienes ${max} partidas activas. Aborta o espera a que terminen.`,
   modelWithoutTools: (model: string, seat: string) =>
     `El modelo ${model} no admite tool calling. Elige otro para el asiento ${seat}.`,
@@ -36,7 +36,7 @@ type ApiText = typeof ES;
 const EN: ApiText = {
   badBody: "Could not read the request body.",
   invalidBody: "The request body is not valid.",
-  missingApiKey: "No OpenRouter API key is configured. Add it in Settings.",
+  missingApiKey: "A model has no API key to use: add OpenRouter's or its provider's own (OpenAI, Anthropic, Gemini) in Settings.",
   tooManyGames: (max) => `You already have ${max} active games. Abort one or wait for them to finish.`,
   modelWithoutTools: (model, seat) =>
     `The model ${model} does not support tool calling. Pick another one for seat ${seat}.`,

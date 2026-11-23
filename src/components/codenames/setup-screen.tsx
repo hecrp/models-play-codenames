@@ -39,6 +39,13 @@ import {
 import { randomSeed } from "@/lib/codenames/prng";
 import { randomDemoId } from "@/lib/codenames/demo/ids";
 import {
+  PROVIDERS,
+  routeForModel,
+  type DirectProvider,
+  type ModelVia,
+} from "@/lib/codenames/providers";
+import type { ProviderSettings } from "@/lib/storage";
+import {
   SEATS,
   operativeSeat,
   spymasterSeat,
@@ -80,7 +87,11 @@ const ES = {
   humanSpymaster: "Juegas tú: verás los colores y escribirás las pistas.",
   humanOperative: "Juegas tú: sin modo dios, escribes o haces clic en las cartas.",
   temperature: "Temperatura",
-  missingKey: "Configura tu API key de OpenRouter para empezar.",
+  missingKey:
+    "Algún modelo va por OpenRouter y no hay clave de OpenRouter: añádela o la de su proveedor en Ajustes.",
+  viaOpenRouterHint: "Este modelo se llamará por OpenRouter.",
+  viaDirectHint: (provider: string) =>
+    `Este modelo se llamará con tu clave de ${provider}, sin pasar por OpenRouter.`,
   missingModels: "Faltan modelos en algún asiento.",
   createFailed: "No se pudo crear la partida.",
   watchDemo: "Ver una partida de demostración",
@@ -164,7 +175,11 @@ const STRINGS: Record<Locale, typeof ES> = {
     humanSpymaster: "You play: you'll see the colors and write the clues.",
     humanOperative: "You play: no god mode, type or click on the cards.",
     temperature: "Temperature",
-    missingKey: "Set up your OpenRouter API key to start.",
+    missingKey:
+      "A model goes through OpenRouter and there is no OpenRouter key: add it, or its provider's own, in Settings.",
+    viaOpenRouterHint: "This model will be called through OpenRouter.",
+    viaDirectHint: (provider: string) =>
+      `This model will be called with your ${provider} key, skipping OpenRouter.`,
     missingModels: "Some seat is missing a model.",
     createFailed: "Could not create the game.",
     watchDemo: "Watch a demo game",
@@ -251,6 +266,9 @@ interface SetupScreenProps {
   warning: string | null;
   error: string | null;
   hasServerKey: boolean;
+  /** Which provider keys the server environment defines. */
+  serverKeys: Record<"openrouter" | DirectProvider, boolean>;
+  providerSettings: ProviderSettings;
   apiKey: string;
   onOpenSettings: () => void;
   onStarted: (gameId: string) => void;
@@ -395,10 +413,13 @@ function SeatEditor({
   onPickModel,
   onPickAvatar,
   onToggleHuman,
+  via,
 }: {
   seat: Seat;
   config: SeatConfig;
   model: ModelInfo | undefined;
+  /** Who will serve this seat's model: OpenRouter or its provider's own API. */
+  via: ModelVia;
   onChange: (patch: Partial<SeatConfig>) => void;
   onPickModel: () => void;
   onPickAvatar: () => void;
@@ -499,6 +520,15 @@ function SeatEditor({
               <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-soft">
                 {model ? modelDisplayName(model.name) : config.modelId}
               </span>
+              <span
+                className={cn(
+                  "shrink-0 rounded-full border px-1.5 text-[10px] font-medium leading-4",
+                  via === "openrouter" ? "border-line text-faint" : "border-accent/40 text-accent",
+                )}
+                title={via === "openrouter" ? t.viaOpenRouterHint : t.viaDirectHint(PROVIDERS[via].label)}
+              >
+                {via === "openrouter" ? "OpenRouter" : PROVIDERS[via].label}
+              </span>
               <ChevronRight size={11} className="shrink-0 text-faint" />
             </button>
           )}
@@ -545,7 +575,8 @@ function SeatEditor({
           min={0}
           max={2}
           step={0.1}
-          value={config.temperature}
+          // null (not sent) only comes from study configs; show the app default.
+          value={config.temperature ?? (config.seat.endsWith("spymaster") ? 0.7 : 0.3)}
           disabled={!temperature}
           onChange={(value) => onChange({ temperature: value })}
           formatValue={(value) => value.toFixed(1)}
@@ -563,6 +594,8 @@ export function SetupScreen({
   warning,
   error: modelsError,
   hasServerKey,
+  serverKeys,
+  providerSettings,
   apiKey,
   onOpenSettings,
   onStarted,
@@ -774,9 +807,19 @@ export function SetupScreen({
     });
   };
 
+  const routeOf = (modelId: string) =>
+    routeForModel(
+      modelId,
+      providerSettings.routing,
+      (provider) => serverKeys[provider] || Boolean(providerSettings.keys[provider]),
+    );
+
   const start = async () => {
     setError(null);
-    if (!hasServerKey && !apiKey.trim()) {
+    const needsOpenRouter = SEATS.some(
+      (seat) => !seats[seat].human && routeOf(seats[seat].modelId) === "openrouter",
+    );
+    if (needsOpenRouter && !hasServerKey && !apiKey.trim()) {
       setError(t.missingKey);
       onOpenSettings();
       return;
@@ -794,6 +837,7 @@ export function SetupScreen({
           seats: withSupportedEfforts(seats, toolModels),
           speed,
           maxCostUsd: maxCost > 0 ? maxCost : null,
+          providers: providerSettings.routing,
         },
         apiKey,
       );
@@ -991,6 +1035,7 @@ export function SetupScreen({
             onChange={(patch) => updateSeat(seat, patch)}
             onPickModel={() => setTargetSeat(seat)}
             onPickAvatar={() => setAvatarSeat(seat)}
+            via={routeOf(seats[seat].modelId)}
             onToggleHuman={() =>
               setSeats((current) => {
                 const enable = !current[seat].human;

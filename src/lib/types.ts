@@ -1,3 +1,4 @@
+import type { DirectProvider } from "@/lib/codenames/providers";
 export interface Usage {
   promptTokens: number;
   completionTokens: number;
@@ -36,6 +37,8 @@ export interface ModelsResponse {
   models: ModelInfo[];
   source: "openrouter" | "fallback";
   hasServerKey: boolean;
+  /** Which provider keys the server environment defines. */
+  serverKeys: Record<"openrouter" | DirectProvider, boolean>;
   fetchedAt: number;
   warning?: string;
 }

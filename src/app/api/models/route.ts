@@ -1,5 +1,6 @@
 import { connection } from "next/server";
 import { getModelCatalog } from "@/lib/server/model-catalog";
+import { serverKeyFlags } from "@/lib/server/provider-keys";
 import type { ModelsResponse } from "@/lib/types";
 
 export async function GET() {
@@ -7,13 +8,14 @@ export async function GET() {
   await connection();
 
   const catalog = await getModelCatalog();
-  const hasServerKey = Boolean(process.env.OPENROUTER_API_KEY?.trim());
+  const serverKeys = serverKeyFlags();
 
   return Response.json(
     {
       models: catalog.models,
       source: catalog.source,
-      hasServerKey,
+      hasServerKey: serverKeys.openrouter,
+      serverKeys,
       fetchedAt: catalog.fetchedAt,
       ...(catalog.warning ? { warning: catalog.warning } : {}),
     } satisfies ModelsResponse,

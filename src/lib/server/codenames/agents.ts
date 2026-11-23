@@ -1,11 +1,25 @@
 import { findModel, supportsToolCalling } from "@/lib/server/model-catalog";
+import { completeWithAnthropic } from "@/lib/server/anthropic";
+import { completeWithOpenAIResponses } from "@/lib/server/openai-responses";
 import { completeWithTools, estimateCost, OpenRouterError } from "@/lib/server/openrouter";
+import {
+  nativeModelId,
+  routeForModel,
+  type DirectProvider,
+  type ProviderRouting,
+} from "@/lib/codenames/providers";
 import { extractJsonObject, parseToolCall } from "@/lib/codenames/action-parser";
 import { gameText } from "@/lib/codenames/messages";
-import { buildAgentPrompt, PROMPT_VERSION } from "@/lib/codenames/prompts";
-import { lowerEffort, outputBudget, resolveEffort } from "@/lib/codenames/reasoning";
+import { buildAgentPrompt, promptVersionFor } from "@/lib/codenames/prompts";
+import {
+  capToModel,
+  lowerEffort,
+  MODEL_CALL_TIMEOUT_MS,
+  outputBudget,
+  resolveEffort,
+} from "@/lib/codenames/reasoning";
 import { roleOfSeat } from "@/lib/codenames/seats";
-import { toolChoiceForSeat, toolsForSeat } from "@/lib/codenames/tools";
+import { toolChoiceForSeat, toolsForSeat, type ToolChoice } from "@/lib/codenames/tools";
 import type { ModelInfo } from "@/lib/types";
 import type {
   AgentAdapter,
@@ -15,12 +29,18 @@ import type {
   GameAction,
   Language,
   OracleErrorCode,
+  PromptVariant,
   ReasoningEffort,
   Seat,
 } from "@/lib/codenames/types";
 
 export interface OpenRouterAgentOptions {
-  apiKey: string;
+  /** OpenRouter key: serves every model without a direct route. */
+  apiKey: string | null;
+  /** Keys for calling providers directly (OpenAI, Anthropic, Gemini). */
+  directKeys?: Partial<Record<DirectProvider, string | null>>;
+  /** Per provider: its own API (default when a key exists) or OpenRouter. */
+  routing?: ProviderRouting;
   models: readonly ModelInfo[];
   timeoutMs?: number;
   /** Fixed output budget; by default it grows with the reasoning effort. */
@@ -29,6 +49,23 @@ export interface OpenRouterAgentOptions {
   reasoningEffort?: ReasoningEffort;
   /** OpenRouter provider routing (e.g. pin a provider for reproducible studies). */
   provider?: Record<string, unknown>;
+  /**
+   * OpenRouter provider routing per model id, applied by the model of each
+   * seat; wins over `provider`. The study uses it to pin one endpoint per model.
+   */
+  providerByModel?: Readonly<Record<string, Record<string, unknown>>>;
+  /**
+   * Parameters each pinned endpoint declares, by model id (from OpenRouter's
+   * endpoint list). They win over the catalog's model-level list, which is the
+   * union of every endpoint of the model.
+   */
+  endpointParameters?: Readonly<Record<string, readonly string[]>>;
+  /** Output limit of each pinned endpoint, by model id; it can be lower than the model's. */
+  endpointMaxOutput?: Readonly<Record<string, number>>;
+  /** "rules" leaves the strategy advice out of the prompts (default "full"). */
+  promptVariant?: PromptVariant;
+  /** Bot mode: the rival is an automaton revealing this many cards per turn. */
+  botPace?: number;
 }
 
 function metaFromCompletion(
@@ -119,9 +156,19 @@ function interpret(completion: Completion, seat: Seat, lang: Language): Interpre
   return { ok: true, action: parsed.action, ...(recovered ? { recovered } : {}) };
 }
 
-export function createOpenRouterAgentAdapter(
+/** tool_choice as recorded in the meta: "auto", "required" or the tool's name. */
+function toolChoiceLabel(choice: ToolChoice): string {
+  return typeof choice === "string" ? choice : choice.function.name;
+}
+
+/** Alias kept for callers that only know about OpenRouter. */
+export { createModelAgentAdapter as createOpenRouterAgentAdapter };
+
+export function createModelAgentAdapter(
   options: OpenRouterAgentOptions,
 ): AgentAdapter {
+  // Recorded in every move: "v12", or "v12-rules" for the rules-only variant.
+  const promptVersion = promptVersionFor(options.promptVariant, options.botPace);
   return {
     async request(request: AgentRequest): Promise<AgentResponse> {
       const lang = request.view.lang;
@@ -135,7 +182,7 @@ export function createOpenRouterAgentAdapter(
             message: text.noToolCalling(model.name),
             fatal: true,
           },
-          meta: { modelId: model.id, promptVersion: PROMPT_VERSION },
+          meta: { modelId: model.id, promptVersion },
         };
       }
 
@@ -151,7 +198,7 @@ export function createOpenRouterAgentAdapter(
         request.seat,
         request.view,
         request.feedback,
-        { reasoningField },
+        { reasoningField, variant: options.promptVariant, botPace: options.botPace },
       );
       const tools = toolsForSeat(request.seat, request.view, { reasoningField });
       const supportsTemperature =
@@ -159,20 +206,53 @@ export function createOpenRouterAgentAdapter(
         model.supportedParameters.length === 0 ||
         model.supportedParameters.includes("temperature");
 
+      const via = routeForModel(
+        request.config.modelId,
+        options.routing,
+        (provider) => Boolean(options.directKeys?.[provider]),
+      );
+      const toolChoice = toolChoiceForSeat(request.seat);
+      const declared =
+        options.endpointParameters?.[request.config.modelId] ?? model?.supportedParameters ?? [];
+      // One call per answer. The OpenAI and Anthropic transports always disable
+      // parallel calls; through OpenRouter only an endpoint that declares the
+      // parameter gets it (none of the study's pinned endpoints does).
+      const parallelToolCalls =
+        via === "openai" || via === "anthropic"
+          ? false
+          : via === "openrouter" && declared.includes("parallel_tool_calls")
+            ? false
+            : undefined;
       const call = (callEffort: ReasoningEffort | undefined, maxTokens: number) =>
-        completeWithTools({
-          apiKey: options.apiKey,
-          model: request.config.modelId,
+        (via === "anthropic"
+          ? completeWithAnthropic
+          : via === "openai"
+            ? completeWithOpenAIResponses
+            : completeWithTools)({
+          apiKey: via === "openrouter" ? (options.apiKey ?? "") : (options.directKeys?.[via] ?? ""),
+          ...(via === "google" ? { endpoint: "google" as const } : {}),
+          model:
+            via === "openrouter"
+              ? request.config.modelId
+              : nativeModelId(request.config.modelId, via),
           systemPrompt: system,
           userPrompt: user,
           tools,
-          toolChoice: toolChoiceForSeat(request.seat),
-          temperature: supportsTemperature ? request.config.temperature : undefined,
+          toolChoice,
+          ...(via === "openrouter" && parallelToolCalls === false ? { parallelToolCalls } : {}),
+          // null in the seat means "do not send it": the provider's default applies.
+          temperature:
+            supportsTemperature && request.config.temperature !== null
+              ? request.config.temperature
+              : undefined,
           maxTokens,
-          timeoutMs: options.timeoutMs ?? 60_000,
+          timeoutMs: options.timeoutMs ?? MODEL_CALL_TIMEOUT_MS,
           includeReasoning: callEffort !== undefined,
           reasoningEffort: callEffort,
-          provider: options.provider,
+          provider:
+            via === "openrouter"
+              ? (options.providerByModel?.[request.config.modelId] ?? options.provider)
+              : undefined,
           signal: request.signal,
           lang,
         });
@@ -180,7 +260,8 @@ export function createOpenRouterAgentAdapter(
       const failure = (caught: unknown, cost?: number): AgentResponse => {
         const meta: EventMeta = {
           modelId: model?.id,
-          promptVersion: PROMPT_VERSION,
+          promptVersion,
+          via,
           ...(cost ? { costUsd: cost } : {}),
         };
         if (caught instanceof OpenRouterError) {
@@ -221,8 +302,22 @@ export function createOpenRouterAgentAdapter(
         };
       };
 
+      // The output limit is the model's, or its pinned endpoint's when lower.
+      const endpointLimit = options.endpointMaxOutput?.[request.config.modelId];
+      const limited =
+        model && endpointLimit && endpointLimit > 0
+          ? {
+              ...model,
+              maxOutputTokens:
+                (model.maxOutputTokens ?? 0) > 0
+                  ? Math.min(model.maxOutputTokens ?? 0, endpointLimit)
+                  : endpointLimit,
+            }
+          : model;
       let usedEffort = effort;
-      let maxTokens = options.maxTokens ?? outputBudget(model, effort);
+      // A fixed budget (e.g. a study plan's maxTokens) is capped by the model's limit too.
+      let maxTokens =
+        options.maxTokens !== undefined ? capToModel(limited, options.maxTokens) : outputBudget(limited, effort);
       let completion: Completion;
       try {
         completion = await call(usedEffort, maxTokens);
@@ -237,11 +332,9 @@ export function createOpenRouterAgentAdapter(
       let lengthRetry = false;
       let earlierCost = 0;
       if (!result.ok && completion.finishReason === "length") {
-        earlierCost = metaFromCompletion(completion, model, PROMPT_VERSION).costUsd ?? 0;
+        earlierCost = metaFromCompletion(completion, model, promptVersion).costUsd ?? 0;
         usedEffort = usedEffort ? (lowerEffort(model, usedEffort) ?? usedEffort) : undefined;
-        const limit = model?.maxOutputTokens;
-        maxTokens = Math.round(maxTokens * 1.5);
-        if (limit && limit > 0) maxTokens = Math.min(maxTokens, limit);
+        maxTokens = capToModel(limited, maxTokens * 2);
         try {
           completion = await call(usedEffort, maxTokens);
         } catch (caught) {
@@ -251,9 +344,15 @@ export function createOpenRouterAgentAdapter(
         lengthRetry = true;
       }
 
-      const base = metaFromCompletion(completion, model, PROMPT_VERSION);
+      const base = metaFromCompletion(completion, model, promptVersion);
+      const sentChoice =
+        via === "anthropic" || completion.toolChoiceFallback ? "auto" : toolChoiceLabel(toolChoice);
       const meta: EventMeta = {
         ...base,
+        via,
+        toolChoice: sentChoice,
+        toolChoiceFallback: completion.toolChoiceFallback,
+        ...(parallelToolCalls === false ? { parallelToolCalls } : {}),
         ...(earlierCost ? { costUsd: (base.costUsd ?? 0) + earlierCost } : {}),
         ...(usedEffort ? { reasoningEffort: usedEffort } : {}),
         maxTokens,

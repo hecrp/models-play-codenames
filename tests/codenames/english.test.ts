@@ -15,7 +15,7 @@ describe("English games", () => {
     const { state } = englishGame();
     expect(state.lang).toBe("en");
     expect(state.board.every((card) => EN_WORDS.includes(card.word))).toBe(true);
-    expect(validateClue(state, state.board[0].word, 1)?.message).toMatch(/is on the board/);
+    expect(validateClue(state, state.board[0].word, 1)?.message).toMatch(/is an unrevealed card on the board/);
     const wrong = apply(state, operativeSeat(state.turn.team), { type: "stop" });
     expect(!wrong.ok && wrong.message).toMatch(/operative|clue/i);
   });

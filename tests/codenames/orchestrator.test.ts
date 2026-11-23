@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import { createGame, normalizeWord } from "../../src/lib/codenames/engine";
 import { roleOfSeat } from "../../src/lib/codenames/seats";
 import { ES_WORDS } from "../../src/lib/codenames/words/es";
-import { GameOrchestrator } from "../../src/lib/server/codenames/orchestrator";
+import { GameOrchestrator, MAX_TRANSIENT_RETRIES } from "../../src/lib/server/codenames/orchestrator";
+import { MAX_ATTEMPTS } from "../../src/lib/codenames/engine";
 import type {
   AgentAdapter,
   AgentRequest,
@@ -297,6 +298,49 @@ describe("GameOrchestrator", () => {
     await running;
     const error = game.events.find((event) => event.type === "agent_error");
     expect(error?.type === "agent_error" && error.data.transient).toBe(true);
+  });
+
+  it("retries infrastructure failures without spending the move's attempts", async () => {
+    let failures = 0;
+    const adapter = adapterFrom((request) => {
+      if (failures < MAX_TRANSIENT_RETRIES) {
+        failures += 1;
+        return response(null, {
+          error: { code: "timeout", message: "Timeout.", fatal: false, transient: true },
+        });
+      }
+      return response(playAction(request));
+    });
+    const game = createOrchestrator(adapter);
+    const running = game.run();
+    await waitUntil(() => game.events.some((event) => event.type === "clue_given"));
+    game.abort();
+    await running;
+    const errors = game.events.filter((event) => event.type === "agent_error");
+    expect(errors).toHaveLength(MAX_TRANSIENT_RETRIES);
+    for (const error of errors) {
+      expect(error.type === "agent_error" && error.data.attemptsLeft).toBe(MAX_ATTEMPTS);
+    }
+  });
+
+  it("caps the free retries so a provider that keeps failing cannot loop", async () => {
+    const adapter = adapterFrom(() =>
+      response(null, { error: { code: "timeout", message: "Timeout.", fatal: false, transient: true } }),
+    );
+    const game = createOrchestrator(adapter);
+    const running = game.run();
+    await waitUntil(() =>
+      game.events.some((event) => event.type === "turn_ended" && event.data.reason === "clue_failed"),
+    );
+    game.abort();
+    await running;
+    const firstTurn = game.events.slice(
+      0,
+      game.events.findIndex((event) => event.type === "turn_ended"),
+    );
+    const errors = firstTurn.filter((event) => event.type === "agent_error");
+    expect(errors).toHaveLength(MAX_TRANSIENT_RETRIES + MAX_ATTEMPTS);
+    expect(errors.at(-1)?.type === "agent_error" && errors.at(-1)?.data.attemptsLeft).toBe(0);
   });
 
   it("aborts while a model call is in flight", async () => {

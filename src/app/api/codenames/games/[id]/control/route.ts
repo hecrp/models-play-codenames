@@ -1,7 +1,7 @@
 import type { NextRequest } from "next/server";
 import { parseClientId, parseControl } from "@/lib/codenames/validation";
 import { getModelCatalog } from "@/lib/server/model-catalog";
-import { resolveOpenRouterKey } from "@/lib/server/openrouter";
+import { resolveProviderKeys } from "@/lib/server/provider-keys";
 import { controlGame } from "@/lib/server/codenames/runtime";
 import { apiText, localeFromHeaders } from "@/lib/codenames/api-messages";
 
@@ -29,15 +29,13 @@ export async function POST(
     return jsonError(parsed.message, "invalid_control", 400);
   }
 
-  const apiKey = resolveOpenRouterKey(
-    request.headers.get("x-openrouter-key"),
-  );
+  const keys = resolveProviderKeys(request.headers);
   const models =
     parsed.action === "resume" ? (await getModelCatalog()).models : undefined;
 
   const result = await controlGame(id, parsed.action, {
     speed: parsed.speed,
-    apiKey,
+    keys,
     models,
     clientId: parseClientId(request.headers.get("x-client-id")),
   });

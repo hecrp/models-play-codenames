@@ -189,7 +189,7 @@ export function playFakeGame(options: FakeGameOptions): FakeGameResult {
       state.turn.phase === "clue"
         ? spymasterSeat(state.turn.team)
         : operativeSeat(state.turn.team);
-    const view = viewFor(seat, state, buildPublicHistory(events));
+    const view = viewFor(seat, state, buildPublicHistory(events), events);
     const action = options.policy(seat, view, state);
     const result = apply(state, seat, action);
     if (!result.ok) {

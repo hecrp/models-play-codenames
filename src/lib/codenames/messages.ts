@@ -4,12 +4,20 @@ import type { GameOverReason, GuessResult, Language, Team, TurnEndReason } from 
  * Every text the server produces during a game (arbiter errors, history, tool
  * feedback). It is stored in the event log, so it follows the game language.
  */
+/** Case and accents aside, are two words the same? (engine.ts imports this file.) */
+function normalizeForMessage(value: string): string {
+  return value.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
 const ES = {
   team: { red: "rojo", blue: "azul" } satisfies Record<Team, string>,
 
   clueNotSingleWord: "La pista debe ser una sola palabra, sin espacios ni guiones.",
   numberRange: (min: number, max: number) => `El número debe ser un entero entre ${min} y ${max}.`,
-  clueOnBoard: (word: string) => `«${word}» está en el tablero y no puede aparecer en la pista.`,
+  clueOnBoard: (clue: string, card: string) =>
+    normalizeForMessage(clue) === normalizeForMessage(card)
+      ? `La pista «${clue}» es una carta del tablero sin revelar.`
+      : `La pista «${clue}» cuenta como la misma palabra o familia que «${card}», una carta del tablero sin revelar.`,
   gameOver: "La partida ya ha terminado.",
   notTeamTurn: (team: string) => `No es el turno del equipo ${team}.`,
   onlySpymasterClues: "Solo el jefe de espías puede dar una pista.",
@@ -72,6 +80,7 @@ const ES = {
       `Jefe ${team}:${quote} Pista «${word}» ${number}.`,
     guess: (team: string, quote: string, word: string, result: string) =>
       `Agente ${team}:${quote} revela «${word}» (${result}).`,
+    botGuess: (team: string, word: string) => `Autómata ${team}: revela «${word}» (era suya).`,
     turnEnd: (reason: string) => `Fin del turno: ${reason}.`,
     says: (text: string) => `Dice: «${text}»`,
     endReasons: {
@@ -83,9 +92,8 @@ const ES = {
       clue_failed: "pista fallida",
       attempts_exhausted: "intentos agotados",
       turn_limit: "límite de turnos",
+      bot_turn: "el autómata pasa",
     } satisfies Record<TurnEndReason, string>,
-    seatError: (seat: string, code: string, message: string) =>
-      `Fallo del asiento ${seat} (${code}): ${message}`,
     draw: "Tablas por límite de turnos.",
     winner: (team: string, reason: GameOverReason) => `Gana el equipo ${team} (${reason}).`,
     noWinner: (reason: GameOverReason) => `Partida sin ganador (${reason}).`,
@@ -106,7 +114,10 @@ const EN: GameText = {
 
   clueNotSingleWord: "The clue must be a single word, without spaces or hyphens.",
   numberRange: (min, max) => `The number must be an integer between ${min} and ${max}.`,
-  clueOnBoard: (word) => `"${word}" is on the board and cannot appear in the clue.`,
+  clueOnBoard: (clue, card) =>
+    normalizeForMessage(clue) === normalizeForMessage(card)
+      ? `The clue "${clue}" is an unrevealed card on the board.`
+      : `The clue "${clue}" counts as the same word or word family as "${card}", an unrevealed card on the board.`,
   gameOver: "The game is already over.",
   notTeamTurn: (team) => `It is not the ${team} team's turn.`,
   onlySpymasterClues: "Only the spymaster can give a clue.",
@@ -166,6 +177,7 @@ const EN: GameText = {
     turn: (turn, team) => `Turn ${turn}: ${team} team.`,
     clue: (team, quote, word, number) => `Spymaster ${team}:${quote} Clue "${word}" ${number}.`,
     guess: (team, quote, word, result) => `Operative ${team}:${quote} reveals "${word}" (${result}).`,
+    botGuess: (team, word) => `Automaton ${team}: reveals "${word}" (its own).`,
     turnEnd: (reason) => `End of turn: ${reason}.`,
     says: (text) => `Says: "${text}"`,
     endReasons: {
@@ -177,8 +189,8 @@ const EN: GameText = {
       clue_failed: "failed clue",
       attempts_exhausted: "attempts exhausted",
       turn_limit: "turn limit",
+      bot_turn: "the automaton passes",
     },
-    seatError: (seat, code, message) => `Seat ${seat} failed (${code}): ${message}`,
     draw: "Draw by turn limit.",
     winner: (team, reason) => `The ${team} team wins (${reason}).`,
     noWinner: (reason) => `Game without a winner (${reason}).`,

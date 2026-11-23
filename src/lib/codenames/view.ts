@@ -4,9 +4,11 @@ import type {
   AgentView,
   AgentViewRole,
   CardColor,
+  ClueMemoryEntry,
   EngineEvent,
   GameState,
   StoredGameEvent,
+  Team,
 } from "./types";
 
 /**
@@ -14,10 +16,14 @@ import type {
  * includes hidden card colors (only revealed ones) nor any model reasoning.
  * The spymaster's table talk is left out too: in Codenames the spymaster says
  * only the clue word and number, so their line is an aside for the audience
- * that no model reads.
+ * that no model reads. Rejected moves are left out as well: their messages can
+ * name a hidden card (a clue too close to one of the spymaster's own cards) or
+ * quote the model's text. The seat that failed gets the reason privately as
+ * feedback; a lost turn shows up as its "end of turn" line.
  */
 export function buildPublicHistory(
   events: ReadonlyArray<EngineEvent | StoredGameEvent>,
+  options: { botTeam?: Team } = {},
 ): string[] {
   const started = events.find((event) => event.type === "game_started");
   const text = gameText(started?.type === "game_started" ? started.data.lang : "es");
@@ -39,6 +45,10 @@ export function buildPublicHistory(
         break;
       }
       case "guess_made": {
+        if (options.botTeam && teamOfSeat(event.seat) === options.botTeam) {
+          lines.push(h.botGuess(text.team[options.botTeam], event.data.word));
+          break;
+        }
         const quote = event.data.say ? ` «${event.data.say}»` : "";
         lines.push(
           h.guess(
@@ -56,7 +66,6 @@ export function buildPublicHistory(
         break;
       }
       case "agent_error":
-        lines.push(h.seatError(event.seat, event.data.code, event.data.message));
         break;
       case "game_over":
         lines.push(
@@ -79,13 +88,52 @@ export function buildPublicHistory(
 }
 
 /**
+ * A spymaster's private memory: their team's earlier clues, the targets they
+ * declared for each one and what became of every target since (found by their
+ * operative, still pending, or revealed by the rival's operative). Built from
+ * the clue_given targets, which are private like reasoning, so it must only
+ * ever reach that team's spymaster.
+ */
+export function buildClueMemory(
+  events: ReadonlyArray<EngineEvent | StoredGameEvent>,
+  team: Team,
+): ClueMemoryEntry[] {
+  const entries: ClueMemoryEntry[] = [];
+  let turn = 1;
+  for (const event of events) {
+    if (event.type === "turn_started") {
+      turn = event.data.turn;
+    } else if (event.type === "clue_given" && teamOfSeat(event.seat) === team) {
+      entries.push({
+        turn,
+        word: event.data.word,
+        number: event.data.number,
+        ...(Array.isArray(event.data.targets)
+          ? { targets: event.data.targets.map((word) => ({ word, status: "pending" as const })) }
+          : {}),
+      });
+    } else if (event.type === "guess_made") {
+      const status = teamOfSeat(event.seat) === team ? "found" : "rival";
+      for (const entry of entries) {
+        for (const target of entry.targets ?? []) {
+          if (target.status === "pending" && target.word === event.data.word) target.status = status;
+        }
+      }
+    }
+  }
+  return entries;
+}
+
+/**
  * The ONLY way agents receive game information. Hidden colors are removed for
- * operatives; spymasters get the color lists; spectators see everything.
+ * operatives; spymasters get the color lists and their own clue memory (from
+ * `events`); spectators see everything public.
  */
 export function viewFor(
   role: AgentViewRole,
   state: GameState,
   history: string[] = [],
+  events: ReadonlyArray<EngineEvent | StoredGameEvent> = [],
 ): AgentView {
   const isSpectator = role === "spectator";
   const team = isSpectator ? null : teamOfSeat(role);
@@ -149,6 +197,7 @@ export function viewFor(
         : null,
     },
     history: [...history],
+    clueMemory: isSpymaster && team ? buildClueMemory(events, team) : null,
   };
 }
 

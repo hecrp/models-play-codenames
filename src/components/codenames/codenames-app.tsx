@@ -5,6 +5,7 @@ import { Gamepad2, BookOpen, Settings, X } from "lucide-react";
 import { useModels } from "@/hooks/use-models";
 import { useTheme } from "@/hooks/use-theme";
 import { useApiKey } from "@/hooks/use-api-key";
+import { useProviderSettings } from "@/hooks/use-provider-settings";
 import { THEMES } from "@/lib/themes";
 import {
   Drawer,
@@ -14,6 +15,7 @@ import {
 } from "@/components/ui";
 import { Backdrop, ThemeMenu } from "./effects";
 import { ApiKeyPanel } from "@/components/api-key-panel";
+import { ProviderKeysPanel } from "@/components/provider-keys-panel";
 import { SetupScreen } from "./setup-screen";
 import { GameScreen } from "./game-screen";
 import { RulesScreen } from "./rules-screen";
@@ -33,7 +35,10 @@ const ES = {
   closeSettings: "Cerrar ajustes",
   apiKeyTitle: "API key de OpenRouter",
   apiKeyHelp:
-    "Los cuatro asientos usan la misma clave. Las claves enviadas desde el navegador se guardan solo en memoria durante la partida.",
+    "Sirve a cualquier modelo que no llames con la API de su proveedor. Las claves enviadas desde el navegador se guardan solo en memoria durante la partida.",
+  providersTitle: "Proveedores directos",
+  providersHelp:
+    "Con la clave de OpenAI, Anthropic o Google, sus modelos se llaman con su propia API en vez de por OpenRouter. Puedes elegirlo por proveedor; sin clave, van por OpenRouter.",
   appearance: "Apariencia",
   themesHelp: (n: number) =>
     `${n} temas. Cada uno cambia el tablero, las cartas y el ambiente.`,
@@ -56,7 +61,10 @@ const STRINGS: Record<Locale, typeof ES> = {
     closeSettings: "Close settings",
     apiKeyTitle: "OpenRouter API key",
     apiKeyHelp:
-      "All four seats use the same key. Keys sent from the browser are kept in memory only for the duration of the game.",
+      "Serves every model you do not call through its provider's own API. Keys sent from the browser are kept in memory only for the duration of the game.",
+    providersTitle: "Direct providers",
+    providersHelp:
+      "With an OpenAI, Anthropic or Google key, their models are called through their own API instead of OpenRouter. Choose it per provider; without a key, they go through OpenRouter.",
     appearance: "Appearance",
     themesHelp: (n: number) =>
       `${n} themes. Each one changes the board, the cards and the mood.`,
@@ -101,6 +109,7 @@ export function CodenamesApp() {
   const modelsState = useModels();
   const { theme, setTheme } = useTheme();
   const { apiKey, setApiKey } = useApiKey();
+  const { providerSettings, setProviderSettings } = useProviderSettings();
   const [route, setRoute] = useState<Route>({ kind: "setup" });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
@@ -208,6 +217,8 @@ export function CodenamesApp() {
               warning={modelsState.warning}
               error={modelsState.error}
               hasServerKey={modelsState.hasServerKey}
+              serverKeys={modelsState.serverKeys}
+              providerSettings={providerSettings}
               apiKey={apiKey}
               onOpenSettings={() => setSettingsOpen(true)}
               onStarted={startGame}
@@ -264,6 +275,20 @@ export function CodenamesApp() {
                 apiKey={apiKey}
                 hasServerKey={modelsState.hasServerKey}
                 onChange={setApiKey}
+              />
+            </div>
+          </section>
+
+          <section>
+            <h3 className="text-[14px] font-semibold text-ink">{t.providersTitle}</h3>
+            <p className="mt-0.5 text-[12.5px] leading-relaxed text-muted">
+              {t.providersHelp}
+            </p>
+            <div className="mt-2.5">
+              <ProviderKeysPanel
+                settings={providerSettings}
+                serverKeys={modelsState.serverKeys}
+                onChange={setProviderSettings}
               />
             </div>
           </section>

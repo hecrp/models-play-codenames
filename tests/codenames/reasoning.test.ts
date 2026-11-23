@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   effortOptions,
+  FIRST_ATTEMPT_BUDGET,
   lowerEffort,
   outputBudget,
   resolveEffort,
@@ -20,7 +21,7 @@ function model(id: string, reasoning?: ModelInfo["reasoning"], supportsReasoning
     name: id,
     provider: "test",
     contextLength: 100_000,
-    maxOutputTokens: 32_000,
+    maxOutputTokens: 128_000,
     pricing: { prompt: 0.0000001, completion: 0.0000005 },
     supportsReasoning,
     ...(reasoning ? { reasoning } : {}),
@@ -56,12 +57,15 @@ describe("reasoning effort rules", () => {
     expect(resolveEffort(PLAIN, "high")).toBeUndefined();
   });
 
-  it("steps down one accepted level and sizes the budget by effort", () => {
+  it("steps down one accepted level and gives every model the same first budget, capped by its limit", () => {
     expect(lowerEffort(DEEPSEEK, "low")).toBe("none");
     expect(lowerEffort(GLM, "low")).toBeUndefined();
-    expect(outputBudget(DEEPSEEK, "low")).toBe(4000);
-    expect(outputBudget(PLAIN, undefined)).toBe(1500);
+    expect(FIRST_ATTEMPT_BUDGET).toBe(32_000);
+    expect(outputBudget(DEEPSEEK, "low")).toBe(32_000);
+    expect(outputBudget(DEEPSEEK, "high")).toBe(32_000);
+    expect(outputBudget(PLAIN, undefined)).toBe(32_000);
     expect(outputBudget({ ...DEEPSEEK, maxOutputTokens: 5000 }, "max")).toBe(5000);
+    expect(outputBudget({ ...DEEPSEEK, maxOutputTokens: 0 }, "low")).toBe(32_000);
   });
 
   it("keeps a valid seat effort in the game config and ignores an invalid one", () => {
@@ -149,7 +153,7 @@ describe("OpenRouter agent adapter", () => {
 
   const adapter = () => createOpenRouterAgentAdapter({ apiKey: "k", models: [DEEPSEEK] });
 
-  it("sends the seat's effort with a matching budget, default routing and no reasoning argument", async () => {
+  it("sends the seat's effort with the shared budget, default routing and no reasoning argument", async () => {
     const fetchMock = vi
       .fn()
       .mockResolvedValueOnce(completion({ tool_calls: [clueCall({ word: "SUMMIT", number: 2 })] }, "tool_calls"));
@@ -157,11 +161,11 @@ describe("OpenRouter agent adapter", () => {
 
     const response = await adapter().request(spymasterRequest({ reasoningEffort: "high" }));
     expect(response.action).toMatchObject({ type: "give_clue", word: "SUMMIT" });
-    expect(response.meta).toMatchObject({ reasoningEffort: "high", maxTokens: 12000 });
+    expect(response.meta).toMatchObject({ reasoningEffort: "high", maxTokens: 32000 });
 
     const body = bodyOf(fetchMock, 0);
     expect(body.reasoning.effort).toBe("high");
-    expect(body.max_tokens).toBe(12000);
+    expect(body.max_tokens).toBe(32000);
     expect(body.provider).toEqual({ require_parameters: true });
     expect(body.tools[0].function.parameters.properties.reasoning).toBeUndefined();
     expect(body.messages[0].content).not.toContain("The reasoning field is optional");
@@ -176,10 +180,43 @@ describe("OpenRouter agent adapter", () => {
 
     const response = await adapter().request(spymasterRequest());
     expect(response.action).toMatchObject({ type: "give_clue" });
-    expect(response.meta).toMatchObject({ lengthRetry: true, reasoningEffort: "none", maxTokens: 6000 });
+    expect(response.meta).toMatchObject({ lengthRetry: true, reasoningEffort: "none", maxTokens: 64000 });
     expect(response.meta.costUsd).toBeCloseTo(0.002);
-    expect(bodyOf(fetchMock, 0)).toMatchObject({ max_tokens: 4000, reasoning: { effort: "low" } });
-    expect(bodyOf(fetchMock, 1)).toMatchObject({ max_tokens: 6000, reasoning: { effort: "none" } });
+    expect(bodyOf(fetchMock, 0)).toMatchObject({ max_tokens: 32000, reasoning: { effort: "low" } });
+    expect(bodyOf(fetchMock, 1)).toMatchObject({ max_tokens: 64000, reasoning: { effort: "none" } });
+  });
+
+  it("caps a fixed budget (a study plan's maxTokens) and the retry by the model's output limit", async () => {
+    const small = { ...DEEPSEEK, maxOutputTokens: 20_000 };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(completion({ content: "" }, "length"))
+      .mockResolvedValueOnce(completion({ tool_calls: [clueCall({ word: "SUMMIT", number: 2 })] }, "tool_calls"))
+      .mockResolvedValueOnce(completion({ tool_calls: [clueCall({ word: "SUMMIT", number: 2 })] }, "tool_calls"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const fixed = createOpenRouterAgentAdapter({ apiKey: "k", models: [small], maxTokens: 100_000 });
+    const response = await fixed.request(spymasterRequest());
+    expect(bodyOf(fetchMock, 0).max_tokens).toBe(20_000);
+    expect(bodyOf(fetchMock, 1).max_tokens).toBe(20_000);
+    expect(response.meta.maxTokens).toBe(20_000);
+    // Without a fixed budget the default is capped the same way.
+    await createOpenRouterAgentAdapter({ apiKey: "k", models: [small] }).request(spymasterRequest());
+    expect(bodyOf(fetchMock, 2).max_tokens).toBe(20_000);
+  });
+
+  it("caps by the pinned endpoint's output limit when it is lower than the model's", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(completion({ tool_calls: [clueCall({ word: "SUMMIT", number: 2 })] }, "tool_calls"));
+    vi.stubGlobal("fetch", fetchMock);
+    const pinned = createOpenRouterAgentAdapter({
+      apiKey: "k",
+      models: [DEEPSEEK],
+      endpointMaxOutput: { [DEEPSEEK.id]: 16_000 },
+    });
+    await pinned.request(spymasterRequest());
+    expect(bodyOf(fetchMock, 0).max_tokens).toBe(16_000);
   });
 
   it("accepts the move written as JSON text and identical duplicate calls", async () => {

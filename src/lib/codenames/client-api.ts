@@ -8,6 +8,8 @@ import type {
 } from "./types";
 import type { GameMetrics } from "./metrics";
 import { loadLocale } from "@/lib/i18n";
+import { loadProviderSettings } from "@/lib/storage";
+import { DIRECT_PROVIDERS, PROVIDERS, type ProviderRouting } from "./providers";
 
 const CLIENT_KEY = "openchat:codenames:client:v1";
 const ACTIVE_KEY = "openchat:codenames:active:v1";
@@ -131,11 +133,23 @@ export function saveGodMode(value: boolean): void {
   }
 }
 
+/** Direct provider keys saved in this browser, one header each. */
+function providerKeyHeaders(): Record<string, string> {
+  const { keys } = loadProviderSettings();
+  const result: Record<string, string> = {};
+  for (const provider of DIRECT_PROVIDERS) {
+    const key = keys[provider];
+    if (key) result[PROVIDERS[provider].header] = key;
+  }
+  return result;
+}
+
 function headers(apiKey?: string): HeadersInit {
   return {
     "Content-Type": "application/json",
     "x-client-id": getClientId(),
     ...(apiKey?.trim() ? { "x-openrouter-key": apiKey.trim() } : {}),
+    ...providerKeyHeaders(),
   };
 }
 
@@ -164,6 +178,7 @@ export async function createCodenamesGame(
     seats: Record<Seat, GameConfig["seats"][Seat]>;
     speed: number;
     maxCostUsd: number | null;
+    providers?: ProviderRouting;
   },
   apiKey: string,
 ): Promise<{

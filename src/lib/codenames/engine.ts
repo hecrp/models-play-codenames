@@ -3,7 +3,7 @@ import { EN_WORDS } from "./words/en";
 import { gameText } from "./messages";
 import { createRng, hashSeed, shuffle } from "./prng";
 import { guessesForClue } from "./rules";
-import { otherTeam, roleOfSeat, teamOfSeat } from "./seats";
+import { operativeSeat, otherTeam, roleOfSeat, teamOfSeat } from "./seats";
 import type {
   ApplyError,
   ApplyResult,
@@ -36,10 +36,25 @@ const ASSASSIN_CARDS = 1;
  * Lowercase, trim and remove diacritics (including ñ) so models and board
  * words compare consistently.
  */
+/**
+ * Cyrillic and Greek letters (lowercased) that look like Latin ones. Models
+ * sometimes write a board word with one of them («GALLETА» with a Cyrillic А):
+ * folded, the word still matches its card, and a clue cannot sneak in a board
+ * word that way either.
+ */
+const LOOKALIKES: Record<string, string> = {
+  а: "a", в: "b", е: "e", к: "k", м: "m", н: "h", о: "o", р: "p", с: "c", т: "t",
+  у: "y", х: "x", і: "i", ј: "j", ѕ: "s", ԁ: "d", һ: "h",
+  α: "a", β: "b", ε: "e", ζ: "z", η: "h", ι: "i", κ: "k", μ: "m", ν: "n", ο: "o",
+  ρ: "p", τ: "t", υ: "y", χ: "x",
+};
+const LOOKALIKE_PATTERN = new RegExp(`[${Object.keys(LOOKALIKES).join("")}]`, "g");
+
 export function normalizeWord(value: string): string {
   return value
     .trim()
     .toLowerCase()
+    .replace(LOOKALIKE_PATTERN, (letter) => LOOKALIKES[letter])
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 }
@@ -216,7 +231,7 @@ export function validateClue(
   const hiddenCards = state.board.filter((card) => !card.revealed);
   for (const card of hiddenCards) {
     if (sharesRoot(clue, card.normalized)) {
-      return fail("clue_on_board", text.clueOnBoard(card.word));
+      return fail("clue_on_board", text.clueOnBoard(word, card.word));
     }
   }
   return null;
@@ -390,6 +405,50 @@ function endTurn(
     type: "turn_started",
     data: { turn: state.turnsPlayed, team: next, phase: "clue" },
   });
+}
+
+/**
+ * The order in which the automaton reveals its cards: a fixed shuffle of its
+ * own cards, from the board's seed and the team, so every model faces the same
+ * automaton on the same board.
+ */
+export function botCardOrder(state: GameState, team: Team): string[] {
+  const own = state.board.filter((card) => card.color === team).map((card) => card.word);
+  return shuffle(own, createRng(hashSeed(state.seed * 31 + (team === "red" ? 1 : 2))));
+}
+
+/**
+ * The automaton's turn (study bot mode): it reveals up to `pace` of its own
+ * unrevealed cards in botCardOrder and ends the turn. No clue, no table talk.
+ * It wins if that reveals its last card; the turn limit applies as usual.
+ */
+export function botTurn(state: GameState, pace: number): { state: GameState; events: EngineEvent[] } {
+  if (state.status === "finished" || state.status === "aborted") {
+    return { state: cloneState(state), events: [] };
+  }
+  const next = cloneState(state);
+  const team = next.turn.team;
+  const seat = operativeSeat(team);
+  const events: EngineEvent[] = [];
+  let made = 0;
+  for (const word of botCardOrder(next, team)) {
+    if (made >= pace) break;
+    const card = next.board.find((candidate) => candidate.word === word);
+    if (!card || card.revealed) continue;
+    card.revealed = true;
+    made += 1;
+    events.push({
+      type: "guess_made",
+      seat,
+      data: { word: card.word, color: card.color, result: "own", guessesLeft: Math.max(0, pace - made), guessesMade: made },
+    });
+    if (remainingCards(next)[team] === 0) {
+      finishGame(next, team, "all_cards", events);
+      return { state: next, events };
+    }
+  }
+  endTurn(next, "bot_turn", events, seat);
+  return { state: next, events };
 }
 
 /**

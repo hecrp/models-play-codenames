@@ -1,6 +1,7 @@
 import {
   abortGame,
   apply,
+  botTurn,
   createGame,
   forceEndTurn,
   MAX_ATTEMPTS,
@@ -12,6 +13,7 @@ import { operativeSeat, spymasterSeat } from "@/lib/codenames/seats";
 import type {
   AgentAdapter,
   AgentResponse,
+  BotConfig,
   EngineEvent,
   EventMeta,
   GameState,
@@ -43,6 +45,8 @@ export interface OrchestratorOptions {
   baseDelayMs?: number;
   speed?: number;
   maxCostUsd?: number | null;
+  /** Study bot mode: this team is an automaton (botTurn), never asked to a model. */
+  bot?: BotConfig;
   signal?: AbortSignal;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
@@ -67,6 +71,9 @@ function isOver(state: GameState): boolean {
  * with the engine, emits events, enforces retries/timeouts and supports
  * pause/resume/step/speed/abort.
  */
+/** Free retries per move for transient (infrastructure) failures. */
+export const MAX_TRANSIENT_RETRIES = 3;
+
 export class GameOrchestrator {
   state: GameState;
   readonly events: StoredGameEvent[] = [];
@@ -77,6 +84,7 @@ export class GameOrchestrator {
   private readonly hooks?: OrchestratorHooks;
   private readonly baseDelayMs: number;
   private readonly maxCostUsd: number | null;
+  private readonly bot?: BotConfig;
   private readonly nowFn: () => number;
   private readonly sleepFn: (ms: number) => Promise<void>;
   private readonly abortController = new AbortController();
@@ -102,6 +110,7 @@ export class GameOrchestrator {
     this.hooks = options.hooks;
     this.baseDelayMs = options.baseDelayMs ?? DEFAULT_BASE_DELAY_MS;
     this.maxCostUsd = options.maxCostUsd ?? null;
+    this.bot = options.bot;
     this.nowFn = options.now ?? Date.now;
     this.sleepFn = options.sleep ?? delay;
     this.speedValue = options.speed ?? 1;
@@ -337,15 +346,20 @@ export class GameOrchestrator {
 
   private async askWithRetries(seat: Seat): Promise<AskResult> {
     let feedback: string | undefined;
+    let attempt = 1;
+    // Infrastructure failures (timeouts…) are not the model's fault: they are
+    // retried without spending one of the move's attempts, up to this cap.
+    let transientRetries = 0;
 
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    while (attempt <= MAX_ATTEMPTS) {
       if (this.abortedFlag) return { kind: "aborted" };
       if (!(await this.gate())) return { kind: "aborted" };
 
       const view = viewFor(
         seat,
         this.state,
-        buildPublicHistory(this.events),
+        buildPublicHistory(this.events, { botTeam: this.bot?.team }),
+        this.events,
       );
 
       await this.emit({
@@ -411,11 +425,16 @@ export class GameOrchestrator {
           response.meta,
         );
         feedback = result.message;
+        attempt += 1;
         continue;
       }
 
       const message =
         response.error?.message ?? gameText(this.state.lang).noAction;
+      const freeRetry =
+        response.error?.transient === true &&
+        !response.error.fatal &&
+        transientRetries < MAX_TRANSIENT_RETRIES;
       await this.emit(
         {
           type: "agent_error",
@@ -423,7 +442,7 @@ export class GameOrchestrator {
           data: {
             code: response.error?.code ?? "invalid_action",
             message,
-            attemptsLeft: MAX_ATTEMPTS - attempt,
+            attemptsLeft: MAX_ATTEMPTS - attempt + (freeRetry ? 1 : 0),
             phase: this.state.turn.phase,
             ...(response.error?.transient ? { transient: true } : {}),
           },
@@ -443,7 +462,12 @@ export class GameOrchestrator {
         return { kind: "paused" };
       }
 
+      if (freeRetry) {
+        transientRetries += 1;
+        continue;
+      }
       if (!response.error?.transient) feedback = message;
+      attempt += 1;
     }
 
     return { kind: "exhausted" };
@@ -461,6 +485,16 @@ export class GameOrchestrator {
       await this.flushInitialEvents();
 
       while (!isOver(this.state) && !this.abortedFlag) {
+        // The automaton plays its whole turn at once, without a model call.
+        if (this.bot && this.state.turn.team === this.bot.team && this.state.turn.phase === "clue") {
+          if (!(await this.gate())) break;
+          const turn = botTurn(this.state, this.bot.pace);
+          this.state = turn.state;
+          // No meta: no model was called.
+          await this.emitAll(turn.events);
+          await this.notifyState();
+          continue;
+        }
         const seat = this.currentSeat();
         const result = await this.askWithRetries(seat);
 

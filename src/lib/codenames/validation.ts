@@ -1,6 +1,7 @@
+import { parseProviderRouting } from "./providers";
 import { AVATARS, DEFAULT_SEAT_AVATARS, avatarById, isAvatarId } from "./avatars";
 import { DEFAULT_CODENAMES_MODEL_ID } from "./model-presets";
-import { PROMPT_VERSION } from "./prompts";
+import { promptVersionFor } from "./prompts";
 import { isReasoningEffort } from "./reasoning";
 import { randomSeed } from "./prng";
 import { SEATS } from "./seats";
@@ -117,15 +118,21 @@ export function parseGameConfig(raw: unknown, locale: Language = "es"): ConfigPa
       ? null
       : Math.min(Math.max(rawCost, 0.01), 100);
 
+  const providers = parseProviderRouting(body.providers);
+  // Prompt ablation: only "rules" changes anything; it is recorded in the version.
+  const promptVariant = body.promptVariant === "rules" ? "rules" : undefined;
+
   return {
     ok: true,
     config: {
       seed,
       lang,
       seats,
-      promptVersion: PROMPT_VERSION,
+      promptVersion: promptVersionFor(promptVariant),
+      ...(promptVariant ? { promptVariant } : {}),
       speed,
       maxCostUsd,
+      ...(providers ? { providers } : {}),
     },
   };
 }

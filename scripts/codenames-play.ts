@@ -6,6 +6,7 @@ import { ES_WORDS } from "../src/lib/codenames/words/es";
 import { DEFAULT_CODENAMES_MODEL_ID, CODENAMES_EXAMPLE_MODELS } from "../src/lib/codenames/model-presets";
 import {
   DEFAULT_REASONING_EFFORT,
+  MODEL_CALL_TIMEOUT_MS,
   REASONING_EFFORTS,
   isReasoningEffort,
   resolveEffort,
@@ -13,8 +14,20 @@ import {
 import { getModelCatalog, supportsToolCalling } from "../src/lib/server/model-catalog";
 import { createOpenRouterAgentAdapter } from "../src/lib/server/codenames/agents";
 import { GameOrchestrator } from "../src/lib/server/codenames/orchestrator";
-import { resolveOpenRouterKey } from "../src/lib/server/openrouter";
-import type { ReasoningEffort, Seat, SeatConfig, StoredGameEvent } from "../src/lib/codenames/types";
+import { adapterKeys, resolveProviderKeys, seatsWithoutKey } from "../src/lib/server/provider-keys";
+import {
+  DIRECT_PROVIDERS,
+  PROVIDERS,
+  routeForModel,
+  type ProviderRouting,
+} from "../src/lib/codenames/providers";
+import type {
+  GameConfig,
+  ReasoningEffort,
+  Seat,
+  SeatConfig,
+  StoredGameEvent,
+} from "../src/lib/codenames/types";
 
 function loadLocalEnv(): void {
   for (const file of [".env.local", ".env"]) {
@@ -111,10 +124,23 @@ function printEvent(event: StoredGameEvent) {
 }
 
 async function main() {
-  const apiKey = resolveOpenRouterKey();
-  if (!apiKey) {
+  const keys = resolveProviderKeys();
+  // --openai=openrouter (or direct), same for --anthropic and --google;
+  // --via=openrouter sends every model through OpenRouter.
+  const routing: ProviderRouting = {};
+  for (const provider of DIRECT_PROVIDERS) {
+    const value = arg(provider) ?? (arg("via") === "openrouter" ? "openrouter" : undefined);
+    if (value === undefined) continue;
+    if (value !== "direct" && value !== "openrouter") {
+      console.error(`--${provider}=${value} no es válido. Usa direct u openrouter.`);
+      process.exitCode = 1;
+      return;
+    }
+    routing[provider] = value;
+  }
+  if (!keys.openrouter && !DIRECT_PROVIDERS.some((provider) => keys[provider])) {
     console.error(
-      "Falta OPENROUTER_API_KEY. Defínela en .env.local o exporta la variable y vuelve a intentarlo.",
+      "Falta una API key: OPENROUTER_API_KEY o la de un proveedor (OPENAI_API_KEY, ANTHROPIC_API_KEY, GEMINI_API_KEY). Defínela en .env.local.",
     );
     process.exitCode = 1;
     return;
@@ -210,10 +236,20 @@ async function main() {
     return;
   }
 
+  const config = { seats, providers: routing } as unknown as GameConfig;
+  const unserved = seatsWithoutKey(config, keys);
+  if (unserved.length > 0) {
+    console.error(
+      `Sin clave para: ${unserved.map((seat) => `${seat} (${seats[seat].modelId})`).join(", ")}. Añade OPENROUTER_API_KEY o la clave de su proveedor.`,
+    );
+    process.exitCode = 1;
+    return;
+  }
+
   const adapter = createOpenRouterAgentAdapter({
-    apiKey,
+    ...adapterKeys(keys, config),
     models: catalog.models,
-    timeoutMs: 60_000,
+    timeoutMs: MODEL_CALL_TIMEOUT_MS,
   });
 
   const game = new GameOrchestrator({
@@ -240,6 +276,12 @@ async function main() {
       const effort = resolveEffort(model, seats[seat].reasoningEffort);
       const asked = seats[seat].reasoningEffort ?? DEFAULT_REASONING_EFFORT;
       return `${seat}=${effort ?? "—"}${effort && effort !== asked ? ` (pedido ${asked})` : ""}`;
+    }).join(" · ")}`,
+  );
+  console.log(
+    `Rutas: ${SEATS.map((seat) => {
+      const via = routeForModel(seats[seat].modelId, routing, (provider) => Boolean(keys[provider]));
+      return `${seat}=${via === "openrouter" ? "OpenRouter" : `${PROVIDERS[via].label} directo`}`;
     }).join(" · ")}`,
   );
   console.log(`Semilla: ${seed} · tope de coste: $${maxCost.toFixed(2)}`);

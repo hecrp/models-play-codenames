@@ -5,7 +5,7 @@ import {
   activeGameCount,
   startGame,
 } from "@/lib/server/codenames/runtime";
-import { resolveOpenRouterKey } from "@/lib/server/openrouter";
+import { resolveProviderKeys, seatsWithoutKey } from "@/lib/server/provider-keys";
 import {
   parseClientId,
   parseGameConfig,
@@ -23,12 +23,7 @@ function jsonError(message: string, code: string, status: number) {
 export async function POST(request: NextRequest) {
   const locale = localeFromHeaders(request.headers);
   const text = apiText(locale);
-  const apiKey = resolveOpenRouterKey(
-    request.headers.get("x-openrouter-key"),
-  );
-  if (!apiKey) {
-    return jsonError(text.missingApiKey, "missing_api_key", 401);
-  }
+  const keys = resolveProviderKeys(request.headers);
 
   let rawBody: unknown;
   try {
@@ -40,6 +35,11 @@ export async function POST(request: NextRequest) {
   const parsed = parseGameConfig(rawBody, locale);
   if (!parsed.ok) {
     return jsonError(parsed.message, "invalid_config", 400);
+  }
+
+  // Every AI seat needs a key: its provider's own (when routed directly) or OpenRouter's.
+  if (seatsWithoutKey(parsed.config, keys).length > 0) {
+    return jsonError(text.missingApiKey, "missing_api_key", 401);
   }
 
   const clientId = parseClientId(request.headers.get("x-client-id"));
@@ -74,7 +74,7 @@ export async function POST(request: NextRequest) {
       id: gameId,
       clientId,
       config: parsed.config,
-      apiKey,
+      keys,
       models: catalog.models,
     });
     return Response.json(

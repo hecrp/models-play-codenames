@@ -22,23 +22,25 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = "low";
 const UNKNOWN_EFFORTS: readonly ReasoningEffort[] = ["low", "medium", "high"];
 
 /**
- * Output budget (max_tokens) per effort. On OpenRouter the effort is a share
- * of max_tokens (low ≈ 20%, medium ≈ 50%, high ≈ 80%) and reasoning counts
- * against the same budget, so higher effort needs a bigger total to still
- * leave room for the tool call. Tokens are only billed when used.
+ * Output budget (max_tokens) of a call's first attempt, the same for every
+ * model and effort, capped by the model's own output limit. Reasoning counts
+ * against it and calls pay only for what they use, so it is a ceiling: with
+ * the old 12,000 at low effort, HY4 Flash ran out in 8% of its calls (26 of
+ * 312 in the v13 pilot) and each one had to be repeated with twice the room.
+ *
+ * Caveat: for some providers OpenRouter turns the effort into a share of
+ * max_tokens (low ≈ 20%, medium ≈ 50%, high ≈ 80%), so a bigger ceiling can
+ * also mean a bigger reasoning budget for those models.
  */
-const OUTPUT_BUDGET: Record<ReasoningEffort, number> = {
-  none: 1500,
-  minimal: 3000,
-  low: 4000,
-  medium: 8000,
-  high: 12000,
-  xhigh: 16000,
-  max: 24000,
-};
+export const FIRST_ATTEMPT_BUDGET = 32_000;
 
-/** Budget for models that do not reason: a move plus table talk is ~600 tokens. */
-const PLAIN_BUDGET = 1500;
+/**
+ * Per-call timeout, for the whole call (headers and body). Long reasoning on a
+ * slow provider must not fail a move: in the pilots and the screen (~5,000
+ * calls) no model but Qwen 3.8 Flash took longer than 265 s, so 300 s only
+ * cuts calls that are effectively stuck.
+ */
+export const MODEL_CALL_TIMEOUT_MS = 300_000;
 
 export function isReasoningEffort(value: unknown): value is ReasoningEffort {
   return typeof value === "string" && (REASONING_EFFORTS as readonly string[]).includes(value);
@@ -90,12 +92,20 @@ export function lowerEffort(
   return lower[lower.length - 1];
 }
 
-/** max_tokens for a call, capped by the model's own output limit. */
+/** A token budget capped by the model's own output limit (when the catalog gives one). */
+export function capToModel(model: ModelInfo | undefined, tokens: number): number {
+  const limit = model?.maxOutputTokens;
+  return limit && limit > 0 ? Math.min(tokens, limit) : tokens;
+}
+
+/**
+ * max_tokens for a call's first attempt: FIRST_ATTEMPT_BUDGET for every model
+ * and effort, capped by the model's output limit. `_effort` is kept so callers
+ * do not change if the budget ever depends on it again.
+ */
 export function outputBudget(
   model: ModelInfo | undefined,
-  effort: ReasoningEffort | undefined,
+  _effort?: ReasoningEffort,
 ): number {
-  const budget = effort ? OUTPUT_BUDGET[effort] : PLAIN_BUDGET;
-  const limit = model?.maxOutputTokens;
-  return limit && limit > 0 ? Math.min(budget, limit) : budget;
+  return capToModel(model, FIRST_ATTEMPT_BUDGET);
 }

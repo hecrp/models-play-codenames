@@ -101,6 +101,20 @@ describe("validateClue", () => {
     };
   }
 
+  it("names the clue tried and the card it collides with", () => {
+    const state = withCard("PESCADOR");
+    expect(validateClue(state, "Pesca", 1)?.message).toBe(
+      "La pista «Pesca» cuenta como la misma palabra o familia que «PESCADOR», una carta del tablero sin revelar.",
+    );
+    expect(validateClue(state, "pescador", 1)?.message).toBe(
+      "La pista «pescador» es una carta del tablero sin revelar.",
+    );
+    const english = { ...state, lang: "en" as const };
+    expect(validateClue(english, "Pesca", 1)?.message).toBe(
+      'The clue "Pesca" counts as the same word or word family as "PESCADOR", an unrevealed card on the board.',
+    );
+  });
+
   it("rejects compounds and words of the same family", () => {
     expect(validateClue(withCard("PARAGUAS"), "agua", 2)?.code).toBe("clue_on_board");
     expect(validateClue(withCard("SONRISA"), "risa", 2)?.code).toBe("clue_on_board");
@@ -201,6 +215,18 @@ describe("turns", () => {
         number: 1,
       }),
     ).toMatchObject({ ok: false, code: "wrong_phase" });
+  });
+
+  it("matches a guess written with Cyrillic or Greek lookalike letters", () => {
+    expect(normalizeWord("GALLETА")).toBe("galleta"); // Cyrillic А, seen in a real game
+    expect(normalizeWord("ΟСЕАN")).toBe("ocean");
+    const state = giveClue(newGame(), 9);
+    const team = state.turn.team;
+    const card = cardOfColor(state, team);
+    const disguised = card.word.replace(/A/g, "А").replace(/O/g, "Ο");
+    const result = ok(apply(state, operativeSeat(team), { type: "guess", word: disguised }));
+    const event = result.events[0];
+    expect(event.type === "guess_made" && event.data.word).toBe(card.word);
   });
 
   it("reveals an own card and keeps the turn", () => {

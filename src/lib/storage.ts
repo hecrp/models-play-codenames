@@ -1,4 +1,10 @@
 import {
+  DIRECT_PROVIDERS,
+  parseProviderRouting,
+  type DirectProvider,
+  type ProviderRouting,
+} from "./codenames/providers";
+import {
   applyThemeToDocument,
   DEFAULT_THEME,
   isTheme,
@@ -47,4 +53,45 @@ export function saveTheme(theme: Theme): void {
     // Ignore storage failures.
   }
   applyThemeToDocument(theme);
+}
+
+const PROVIDERS_STORAGE = "codenames:providers:v1";
+
+/**
+ * Direct provider keys saved in this browser and how each provider's models
+ * are called. Keys travel to the local server in request headers only.
+ */
+export interface ProviderSettings {
+  keys: Partial<Record<DirectProvider, string>>;
+  routing: ProviderRouting;
+}
+
+export const EMPTY_PROVIDER_SETTINGS: ProviderSettings = { keys: {}, routing: {} };
+
+export function loadProviderSettings(): ProviderSettings {
+  if (typeof window === "undefined") return EMPTY_PROVIDER_SETTINGS;
+  try {
+    const raw = JSON.parse(window.localStorage.getItem(PROVIDERS_STORAGE) ?? "null") as {
+      keys?: Record<string, unknown>;
+      routing?: unknown;
+    } | null;
+    if (!raw || typeof raw !== "object") return EMPTY_PROVIDER_SETTINGS;
+    const keys: ProviderSettings["keys"] = {};
+    for (const provider of DIRECT_PROVIDERS) {
+      const key = raw.keys?.[provider];
+      if (typeof key === "string" && key.trim()) keys[provider] = key.trim();
+    }
+    return { keys, routing: parseProviderRouting(raw.routing) ?? {} };
+  } catch {
+    return EMPTY_PROVIDER_SETTINGS;
+  }
+}
+
+export function saveProviderSettings(settings: ProviderSettings): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(PROVIDERS_STORAGE, JSON.stringify(settings));
+  } catch {
+    // Ignore storage failures.
+  }
 }

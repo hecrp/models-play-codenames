@@ -47,3 +47,6 @@ next-env.d.ts
 
 # model study (runner, plans, data and reports) — local for now
 /study/
+
+# explicador visual del arnés (local, de momento sin versionar)
+/arnes-explicado/

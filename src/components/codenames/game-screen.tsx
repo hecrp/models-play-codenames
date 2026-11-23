@@ -963,6 +963,7 @@ function LiveGame({
               },
               speed: game.runtime?.speed ?? config.speed,
               maxCostUsd: config.maxCostUsd,
+              ...(config.providers ? { providers: config.providers } : {}),
             },
             apiKey,
           );

@@ -5,6 +5,30 @@ import { gameText } from "@/lib/codenames/messages";
 
 const OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions";
 
+/**
+ * Chat Completions endpoints that speak OpenRouter's (OpenAI's) dialect. The
+ * direct one (Gemini's OpenAI-compatible layer) skips OpenRouter-only fields
+ * (provider routing, usage.include, the reasoning object) and sends
+ * reasoning_effort instead. OpenAI itself goes through the Responses API
+ * (openai-responses.ts): its Chat Completions refuses tools with reasoning.
+ */
+export type ChatEndpoint = "openrouter" | "google";
+
+const ENDPOINT_URL: Record<ChatEndpoint, string> = {
+  openrouter: OPENROUTER_URL,
+  google: "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+};
+
+/** Name stored as the serving provider of a direct call. */
+export const DIRECT_PROVIDER_NAME: Record<Exclude<ChatEndpoint, "openrouter">, string> = {
+  google: "Gemini API",
+};
+
+/** reasoning_effort values Gemini accepts: it tops out at "high". */
+function nativeEffort(effort: ReasoningEffort): string {
+  return effort === "xhigh" || effort === "max" ? "high" : effort;
+}
+
 export class OpenRouterError extends Error {
   status: number;
   retryable: boolean;
@@ -25,7 +49,7 @@ export class OpenRouterError extends Error {
   }
 }
 
-function parseRetryAfter(headers: Headers): number | undefined {
+export function parseRetryAfter(headers: Headers): number | undefined {
   const retryAfter = headers.get("retry-after");
   if (retryAfter) {
     const seconds = Number(retryAfter);
@@ -41,7 +65,7 @@ function parseRetryAfter(headers: Headers): number | undefined {
   return undefined;
 }
 
-function sleepWithSignal(ms: number, signal?: AbortSignal, cancelled = "Request cancelled."): Promise<void> {
+export function sleepWithSignal(ms: number, signal?: AbortSignal, cancelled = "Request cancelled."): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new OpenRouterError(0, cancelled, { aborted: true }));
@@ -184,11 +208,19 @@ export interface ToolCompletion {
 
 export interface ToolCompletionOptions {
   apiKey: string;
+  /** Where the call goes (default OpenRouter). `model` must be that API's own id. */
+  endpoint?: ChatEndpoint;
   model: string;
   systemPrompt: string;
   userPrompt: string;
   tools: FunctionTool[];
   toolChoice: ToolChoice;
+  /**
+   * false sends parallel_tool_calls: false. Only for endpoints that declare the
+   * parameter: OpenRouter refuses to route it (404) to one that does not when
+   * require_parameters is on.
+   */
+  parallelToolCalls?: boolean;
   temperature?: number;
   maxTokens?: number;
   timeoutMs?: number;
@@ -213,16 +245,65 @@ interface RequestOutcome {
   retries?: number;
 }
 
+export interface DeadlineOptions {
+  timeoutMs: number;
+  /** The caller's cancellation (e.g. the game was aborted). */
+  signal?: AbortSignal;
+  lang?: Language;
+}
+
+/**
+ * POST with ONE deadline for the whole exchange: connecting, the headers and
+ * reading the body. A non-streaming completion sends its headers almost at
+ * once and its body only when generation ends, so a timer cleared at the
+ * headers bounded nothing (calls of 3–14 minutes went through a 120 s
+ * timeout). The caller's signal cancels it at any point too.
+ *
+ * Returns the response with its body already read as text. Throws
+ * OpenRouterError: status 0 and not retryable on timeout, `aborted` on
+ * cancellation, retryable when the connection fails or drops mid-body.
+ */
+export async function postWithDeadline(
+  url: string,
+  init: { headers: Record<string, string>; body: string },
+  options: DeadlineOptions,
+): Promise<{ response: Response; text: string; latencyMs: number }> {
+  const strings = gameText(options.lang).upstream;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+  const onAbort = () => controller.abort();
+  if (options.signal?.aborted) controller.abort();
+  options.signal?.addEventListener("abort", onAbort, { once: true });
+  const started = performance.now();
+  try {
+    const response = await fetch(url, { method: "POST", ...init, signal: controller.signal });
+    const text = await response.text();
+    return { response, text, latencyMs: Math.round(performance.now() - started) };
+  } catch (error) {
+    if (options.signal?.aborted) throw new OpenRouterError(0, strings.cancelled, { aborted: true });
+    if (controller.signal.aborted) {
+      throw new OpenRouterError(0, strings.timeout(Math.round(options.timeoutMs / 1000)), {
+        retryable: false,
+      });
+    }
+    throw new OpenRouterError(
+      0,
+      `${strings.unreachable}${error instanceof Error ? ` ${error.message}` : ""}`,
+      { retryable: true },
+    );
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener("abort", onAbort);
+  }
+}
+
 async function requestOnce(
   options: ToolCompletionOptions,
   toolChoice: ToolChoice,
 ): Promise<RequestOutcome> {
   const timeoutMs = options.timeoutMs ?? 60_000;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const onAbort = () => controller.abort();
-  options.signal?.addEventListener("abort", onAbort, { once: true });
 
+  const endpoint = options.endpoint ?? "openrouter";
   const payload: Record<string, unknown> = {
     model: options.model,
     messages: [
@@ -231,58 +312,49 @@ async function requestOnce(
     ],
     tools: options.tools,
     tool_choice: toolChoice,
-    max_tokens: options.maxTokens ?? 2000,
     stream: false,
-    usage: { include: true },
   };
+  if (options.parallelToolCalls === false) payload.parallel_tool_calls = false;
   if (options.temperature !== undefined) payload.temperature = options.temperature;
-  const provider =
-    options.provider ?? (options.defaultRouting === false ? undefined : DEFAULT_ROUTING);
-  if (provider) payload.provider = provider;
-  if (options.includeReasoning) {
-    payload.reasoning = {
-      effort: options.reasoningEffort ?? "low",
-      exclude: false,
-    };
+  const maxTokens = options.maxTokens ?? 2000;
+  if (endpoint === "openrouter") {
+    payload.max_tokens = maxTokens;
+    payload.usage = { include: true };
+    const provider =
+      options.provider ?? (options.defaultRouting === false ? undefined : DEFAULT_ROUTING);
+    if (provider) payload.provider = provider;
+    if (options.includeReasoning) {
+      payload.reasoning = {
+        effort: options.reasoningEffort ?? "low",
+        exclude: false,
+      };
+    }
+  } else {
+    payload.max_tokens = maxTokens;
+    if (options.includeReasoning && options.reasoningEffort) {
+      payload.reasoning_effort = nativeEffort(options.reasoningEffort);
+    }
   }
 
-  const started = performance.now();
-  let response: Response;
-  try {
-    response = await fetch(OPENROUTER_URL, {
-      method: "POST",
+  const { response, text: raw, latencyMs } = await postWithDeadline(
+    ENDPOINT_URL[endpoint],
+    {
       headers: {
         Authorization: `Bearer ${options.apiKey}`,
         "Content-Type": "application/json",
-        "HTTP-Referer":
-          process.env.OPENROUTER_SITE_URL ?? "http://localhost:3000",
-        "X-Title": process.env.OPENROUTER_SITE_NAME ?? "Models play Codenames",
+        ...(endpoint === "openrouter"
+          ? {
+              "HTTP-Referer": process.env.OPENROUTER_SITE_URL ?? "http://localhost:3000",
+              "X-Title": process.env.OPENROUTER_SITE_NAME ?? "Models play Codenames",
+            }
+          : {}),
       },
       body: JSON.stringify(payload),
-      signal: controller.signal,
-    });
-  } catch (error) {
-    const text = gameText(options.lang).upstream;
-    if (options.signal?.aborted) {
-      throw new OpenRouterError(0, text.cancelled, { aborted: true });
-    }
-    if (controller.signal.aborted) {
-      throw new OpenRouterError(0, text.timeout(Math.round(timeoutMs / 1000)), {
-        retryable: false,
-      });
-    }
-    throw new OpenRouterError(
-      0,
-      `${text.unreachable}${error instanceof Error ? ` ${error.message}` : ""}`,
-      { retryable: true },
-    );
-  } finally {
-    clearTimeout(timer);
-    options.signal?.removeEventListener("abort", onAbort);
-  }
+    },
+    { timeoutMs, signal: options.signal, lang: options.lang },
+  );
 
   if (!response.ok) {
-    const raw = await response.text().catch(() => "");
     let upstreamMessage = raw;
     try {
       const decoded = JSON.parse(raw) as {
@@ -306,7 +378,7 @@ async function requestOnce(
 
   let data: Record<string, unknown>;
   try {
-    data = (await response.json()) as Record<string, unknown>;
+    data = JSON.parse(raw) as Record<string, unknown>;
   } catch {
     throw new OpenRouterError(
       response.status,
@@ -315,7 +387,7 @@ async function requestOnce(
     );
   }
 
-  return { data, latencyMs: Math.round(performance.now() - started) };
+  return { data, latencyMs };
 }
 
 /**
@@ -332,6 +404,23 @@ function isRoutingRejection(error: unknown): boolean {
     (error.status === 404 ||
       (error.status === 400 && /endpoint|require_parameters/i.test(error.message)))
   );
+}
+
+/** The same options minus the parameter a 400 complains about, if it names one. */
+function withoutRejectedParameter(
+  options: ToolCompletionOptions,
+  error: unknown,
+): ToolCompletionOptions | null {
+  if (!(error instanceof OpenRouterError) || (error.status !== 400 && error.status !== 422)) {
+    return null;
+  }
+  if (options.temperature !== undefined && /temperature/i.test(error.message)) {
+    return { ...options, temperature: undefined };
+  }
+  if (options.includeReasoning && /reasoning|effort/i.test(error.message)) {
+    return { ...options, includeReasoning: false, reasoningEffort: undefined };
+  }
+  return null;
 }
 
 const BACKOFF_BASE_MS = 1_500;
@@ -384,7 +473,9 @@ async function requestWithBackoff(
 export async function completeWithTools(
   options: ToolCompletionOptions,
 ): Promise<ToolCompletion> {
-  const resolvedKey = resolveOpenRouterKey(options.apiKey);
+  const endpoint = options.endpoint ?? "openrouter";
+  const resolvedKey =
+    endpoint === "openrouter" ? resolveOpenRouterKey(options.apiKey) : options.apiKey?.trim();
   if (!resolvedKey) {
     throw new OpenRouterError(
       401,
@@ -414,12 +505,21 @@ export async function completeWithTools(
   try {
     result = await attempt(requestOptions);
   } catch (error) {
-    // Default routing found no provider supporting every parameter: relax it
-    // once before giving up, so a model with few providers still plays.
-    if (options.provider || !isRoutingRejection(error)) throw error;
-    requestOptions = { ...requestOptions, defaultRouting: false };
-    routingFallback = true;
-    result = await attempt(requestOptions);
+    if (endpoint !== "openrouter") {
+      // A direct API rejecting a parameter this model does not take
+      // (temperature on reasoning models, an effort level): drop it once.
+      const relaxed = withoutRejectedParameter(requestOptions, error);
+      if (!relaxed) throw error;
+      requestOptions = relaxed;
+      result = await attempt(requestOptions);
+    } else {
+      // Default routing found no provider supporting every parameter: relax it
+      // once before giving up, so a model with few providers still plays.
+      if (options.provider || !isRoutingRejection(error)) throw error;
+      requestOptions = { ...requestOptions, defaultRouting: false };
+      routingFallback = true;
+      result = await attempt(requestOptions);
+    }
   }
   const { outcome, toolChoiceFallback } = result;
 
@@ -466,7 +566,11 @@ export async function completeWithTools(
         : undefined,
     toolChoiceFallback,
     ...(routingFallback ? { routingFallback } : {}),
-    ...(typeof data.provider === "string" && data.provider ? { provider: data.provider } : {}),
+    ...(endpoint !== "openrouter"
+      ? { provider: DIRECT_PROVIDER_NAME[endpoint] }
+      : typeof data.provider === "string" && data.provider
+        ? { provider: data.provider }
+        : {}),
     retries,
   };
 }
